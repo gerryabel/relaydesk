@@ -15,8 +15,13 @@
     "incremental": true,
     "baseUrl": ".",
     "paths": {
-      "@file:///*": ["./src/*"]
-    }
+      "@/*": ["./src/*"]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
     "next-env.d.ts",

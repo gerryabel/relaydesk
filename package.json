@@ -12,12 +12,13 @@
     "db:migrate": "prisma migrate dev --name init_auth",
     "db:studio": "prisma studio",
     "self-check": "npm run lint && npm run typecheck && npm run build",
-    "infra:check": "node ./.scripts/infra-check.ts"
+    "infra:check": "node --env-file=.env scripts/infra-check.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "better-auth": "^1.6.25",
-    "ioredis": "^5.11.1",
+    "dotenv": "^17.4.2",
     "next": "16.2.12",
     "prisma": "^7.9.1",
     "react": "19.2.4",
@@ -26,7 +27,6 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/ioredis": "^4.28.10",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -4,7 +4,7 @@
 
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { prisma } from "../../db/prisma";
+import { prisma } from "@/lib/db/prisma";
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
@@ -14,6 +14,6 @@ export const auth = betterAuth({
     enabled: true,
   },
   session: {
-    expiresIn: 60 * 60 * 24 * 7, // 7 days
+    expiresIn: 60 * 60 * 24 * 7,
   },
 });

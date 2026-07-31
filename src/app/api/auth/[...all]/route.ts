@@ -1,11 +1,4 @@
-import { auth } from "../../../lib/auth/auth";
+import { auth } from "@/lib/auth/auth";
+import { toNextJsHandler } from "better-auth/next-js";
 
-export async function GET() {
-  const session = await auth.api.getSession({ headers: {} });
-
-  if (session?.user) {
-    redirect("/app");
-  }
-
-  redirect("/login");
-}
+export const { GET, POST } = toNextJsHandler(auth);
