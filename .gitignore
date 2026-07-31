@@ -41,4 +41,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Local AI / coding-agent tooling
+.agents/
+.claude/
+.windsurf/
+
 /src/generated/prisma
