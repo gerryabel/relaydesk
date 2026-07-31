@@ -45,5 +45,8 @@ next-env.d.ts
 .agents/
 .claude/
 .windsurf/
+AGENTS.md
+CLAUDE.md
+skills-lock.json
 
 /src/generated/prisma
