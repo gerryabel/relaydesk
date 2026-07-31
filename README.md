@@ -21,7 +21,7 @@ This repository currently implements:
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 20.9+
 - npm
 - PostgreSQL 18 running locally on `localhost:5432`
 - Git
