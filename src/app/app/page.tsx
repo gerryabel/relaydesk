@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getServerAuthSession } from "@/lib/auth/session";
+import { getDefaultWorkspace } from "@/lib/workspace/server";
 import SignOutButton from "@/components/auth/sign-out-button";
 
 export default async function AppPage() {
@@ -7,6 +8,12 @@ export default async function AppPage() {
 
   if (!session?.user) {
     redirect("/login");
+  }
+
+  const membership = await getDefaultWorkspace(session.user.id);
+
+  if (!membership) {
+    redirect("/app/setup");
   }
 
   const user = session.user;
