@@ -33,6 +33,16 @@ describe('ensureDefaultWorkspace recovery', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(fakeMembership);
 
+    const userFindUniqueSpy = vi.spyOn(sharedPrisma.user, 'findUnique').mockResolvedValue({
+      id: 'user-123',
+      name: 'Workspace Recovery',
+      email: 'recovery@example.com',
+      emailVerified: true,
+      image: null,
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+      updatedAt: new Date('2025-01-01T00:00:00Z'),
+    });
+
     const fakeWorkspace = {
       id: 'workspace-123',
       name: 'Workspace Recovery',
@@ -67,6 +77,7 @@ describe('ensureDefaultWorkspace recovery', () => {
       expect(result.workspace.id).toBe('workspace-123');
     } finally {
       findUniqueSpy.mockRestore();
+      userFindUniqueSpy.mockRestore();
       transactionSpy.mockRestore();
     }
   });
