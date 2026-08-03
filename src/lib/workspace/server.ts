@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/prisma';
 import type { Prisma } from '@/generated/prisma';
+import { getServerAuthSession } from '@/lib/auth/session';
 
 const DEFAULT_WORKSPACE_NAME = 'My Workspace';
 
@@ -8,6 +9,46 @@ type MembershipWithWorkspace = Prisma.MembershipGetPayload<{
     workspace: true;
   };
 }>;
+
+export type MembershipInfo = MembershipWithWorkspace;
+
+export class UnauthorizedError extends Error {
+  constructor(message = 'Unauthorized') {
+    super(message);
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export class ForbiddenError extends Error {
+  constructor(message = 'No workspace membership found') {
+    super(message);
+    this.name = 'ForbiddenError';
+  }
+}
+
+export async function getCurrentMembership(): Promise<MembershipInfo> {
+  const session = await getServerAuthSession();
+
+  if (!session?.user?.id) {
+    throw new UnauthorizedError('No authenticated session');
+  }
+
+  const membership = await prisma.membership.findUnique({
+    where: { userId: session.user.id },
+    include: { workspace: true },
+  });
+
+  if (!membership) {
+    throw new ForbiddenError('No workspace membership found');
+  }
+
+  return membership as MembershipInfo;
+}
+
+export async function getCurrentWorkspace(): Promise<MembershipInfo['workspace']> {
+  const membership = await getCurrentMembership();
+  return membership.workspace;
+}
 
 export async function ensureDefaultWorkspace(userId: string): Promise<MembershipWithWorkspace> {
   const existing = await loadMembership(userId);
