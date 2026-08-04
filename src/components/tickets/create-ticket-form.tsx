@@ -17,9 +17,11 @@ export default function CreateTicketForm() {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
 
+    const rawTitle = formData.get('title');
+    const rawDescription = formData.get('description');
     const result = await createTicketAction({
-      title: (formData.get('title') as string)?.trim() ?? '',
-      description: (formData.get('description') as string)?.trim() || undefined,
+      title: (rawTitle as string)?.trim() ?? '',
+      description: (rawDescription as string)?.trim() || undefined,
       priority: (formData.get('priority') as string) || 'medium',
     } as import('@/lib/tickets/schema').CreateTicketInput);
 

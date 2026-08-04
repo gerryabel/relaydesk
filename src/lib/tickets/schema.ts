@@ -5,26 +5,34 @@ export const ticketStatusSchema = z.enum(['open', 'in_progress', 'resolved', 'cl
 export const ticketPrioritySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 
 export const createTicketSchema = z.object({
-  title: z.string().min(1, 'Judul tiket wajib diisi').max(255, 'Judul tiket maksimal 255 karakter'),
+  title: z.string().trim().min(1, 'Judul tiket wajib diisi').max(140, 'Judul tiket maksimal 140 karakter'),
   description: z
     .string()
-    .max(65535, 'Deskripsi tiket maksimal 65535 karakter')
-    .optional(),
+    .max(5000, 'Deskripsi tiket maksimal 5000 karakter')
+    .nullable()
+    .optional()
+    .transform((value) => {
+      if (typeof value !== 'string') return value;
+      const trimmed = value.trim();
+      return trimmed ? trimmed : null;
+    }),
   priority: ticketPrioritySchema.default('medium'),
 });
 
 export const updateTicketSchema = z.object({
-  title: z
-    .string()
-    .min(1, 'Judul tiket wajib diisi')
-    .max(255, 'Judul tiket maksimal 255 karakter')
-    .optional(),
+  title: z.string().trim().min(1, 'Judul tiket wajib diisi').max(140, 'Judul tiket maksimal 140 karakter').optional(),
   description: z
     .string()
-    .max(65535, 'Deskripsi tiket maksimal 65535 karakter')
-    .optional(),
-  priority: ticketPrioritySchema.optional(),
+    .max(5000, 'Deskripsi tiket maksimal 5000 karakter')
+    .nullable()
+    .optional()
+    .transform((value) => {
+      if (typeof value !== 'string') return value;
+      const trimmed = value.trim();
+      return trimmed ? trimmed : null;
+    }),
   status: ticketStatusSchema.optional(),
+  priority: ticketPrioritySchema.optional(),
 });
 
 export type CreateTicketInput = z.infer<typeof createTicketSchema>;

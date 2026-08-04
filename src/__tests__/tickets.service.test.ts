@@ -129,6 +129,7 @@ describe('ticket services', () => {
     try {
       const ticket = await updateTicket('ticket-1', {
         title: 'Judul Baru',
+        description: null,
         status: 'in_progress',
       });
 
@@ -138,7 +139,7 @@ describe('ticket services', () => {
       });
       expect(updateSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1' },
-        data: { title: 'Judul Baru', status: 'in_progress' },
+        data: { title: 'Judul Baru', description: null, status: 'in_progress' },
         include: { createdBy: true },
       });
       expect(ticket.id).toBe('ticket-1');
@@ -194,7 +195,7 @@ describe('ticket services', () => {
   });
 
   it('createTicket rejects invalid input', async () => {
-    await expect(createTicket({ title: '', priority: 'medium' })).rejects.toThrow();
+    await expect(createTicket({ title: '', description: null, priority: 'medium' })).rejects.toThrow();
   });
 
   it('updateTicket rejects invalid input', async () => {
@@ -203,7 +204,7 @@ describe('ticket services', () => {
       .mockResolvedValue({ id: 'ticket-1' } as never);
 
     try {
-      await expect(updateTicket('ticket-1', { status: 'invalid' as UpdateTicketInput['status'] })).rejects.toThrow();
+      await expect(updateTicket('ticket-1', { description: null, status: 'invalid' as UpdateTicketInput['status'] })).rejects.toThrow();
     } finally {
       findFirstSpy.mockRestore();
     }
