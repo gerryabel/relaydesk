@@ -7,6 +7,8 @@ This document defines the engineering workflow used throughout the RelayDesk pro
 
 Every implementation task must follow this workflow.
 
+Repository must have a clean working tree before creating a feature branch.
+
 ---
 
 # Branch Strategy
@@ -21,6 +23,14 @@ Examples:
 
 phase-2/task-5-ticket-services
 phase-2/task-6-ticket-ui
+
+Before creating a branch:
+
+- verify current branch
+- verify working tree is clean
+- create the new branch
+- switch to the new branch
+- confirm active branch
 
 ---
 
@@ -112,8 +122,9 @@ Before completion:
 Before a task is considered complete:
 
 - Commit
-- Push
 - Completion report
+
+Push only when explicitly requested.
 
 ---
 
@@ -147,6 +158,6 @@ Review              ✅
 Documentation       ✅
 Verification        ✅
 Commit              ✅
-Push                ✅
+Push                ✅ *when explicitly requested*
 
 Definition of Done: PASSED
