@@ -17,7 +17,25 @@ export class TicketNotFoundError extends Error {
   }
 }
 
-export async function createMessage(ticketId: string, input: CreateMessageInput) {
+export type MessageWithCreator = {
+  id: string;
+  ticketId: string;
+  createdById: string | null;
+  body: string;
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy: {
+    id: string;
+    email: string;
+    emailVerified: boolean;
+    name: string;
+    image: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null;
+};
+
+export async function createMessage(ticketId: string, input: CreateMessageInput): Promise<MessageWithCreator> {
   const membership = await getCurrentMembership();
   const parsed = createMessageSchema.parse(input);
 
@@ -52,10 +70,10 @@ export async function createMessage(ticketId: string, input: CreateMessageInput)
         },
       },
     },
-  });
+  }) as Promise<MessageWithCreator>;
 }
 
-export async function getMessages(ticketId: string) {
+export async function getMessages(ticketId: string): Promise<MessageWithCreator[]> {
   const membership = await getCurrentMembership();
 
   const ticket = await prisma.ticket.findFirst({
@@ -86,5 +104,5 @@ export async function getMessages(ticketId: string) {
       },
     },
     orderBy: { createdAt: 'asc' },
-  });
+  }) as Promise<MessageWithCreator[]>;
 }

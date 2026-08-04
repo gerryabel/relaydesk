@@ -1,8 +1,12 @@
 import { notFound } from 'next/navigation';
-import { getTicketById } from '@/lib/tickets/server';
-import { TicketNotFoundError } from '@/lib/tickets/server';
+import { getTicketById, TicketNotFoundError } from '@/lib/tickets/server';
+import { getMessages } from '@/lib/messages/server';
+import type { MessageWithCreator } from '@/lib/messages/server';
+import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
+import CreateMessageForm from '@/components/tickets/create-message-form';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { EmptyState } from '@/components/ui/empty-state';
 
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -22,6 +26,21 @@ const statusLabel: Record<string, string> = {
   closed: 'Closed',
 };
 
+function MessageItem({ message }: { message: MessageWithCreator }) {
+  const author = message.createdBy?.name ?? 'Unknown';
+  const createdAt = new Date(message.createdAt).toLocaleString('id-ID');
+
+  return (
+    <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{author}</p>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400">{createdAt}</p>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">{message.body}</p>
+    </div>
+  );
+}
+
 export async function generateMetadata({ params }: TicketDetailPageProps) {
   const resolved = await params;
   return {
@@ -37,6 +56,17 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
     ticket = await getTicketById(id);
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
+      notFound();
+    }
+
+    throw error;
+  }
+
+  let messages: MessageWithCreator[] = [];
+  try {
+    messages = await getMessages(id);
+  } catch (error) {
+    if (error instanceof MessagesTicketNotFoundError) {
       notFound();
     }
 
@@ -89,6 +119,33 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">
             {ticket.description ?? 'No description provided.'}
           </p>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Messages</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Diskusi terkait tiket ini.
+            </p>
+          </header>
+
+          {messages.length === 0 ? (
+            <EmptyState
+              title="Belum ada pesan"
+              description="Jadikan yang pertama membalas pada tiket ini."
+              action={<Button href="#message-form">Add message</Button>}
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {messages.map((message) => (
+                <MessageItem key={message.id} message={message} />
+              ))}
+            </div>
+          )}
+
+          <div id="message-form" className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+            <CreateMessageForm ticketId={ticket.id} />
+          </div>
         </section>
       </div>
     </div>
