@@ -8,6 +8,7 @@ This repository currently implements:
 
 - **Phase 0 — Foundation**: Next.js 16 App Router, Tailwind CSS, Zod env validation, Prisma ORM 7 setup, PostgreSQL.
 - **Phase 1 — Authentication**: Better Auth with email/password registration, login, logout, protected `/app` area, and server-side session validation.
+- **Phase 2 — Internal Helpdesk MVP**: authenticated workspace provisioning, membership-scoped ticket REST API, ticket and message UI under `/dashboard`, authorization enforcement for unauthenticated/no-membership/cross-workspace access, and validation with Vitest coverage.
 
 ## Stack
 
@@ -106,5 +107,5 @@ GitHub Actions workflow runs `npm ci`, `npm run lint`, `npm run typecheck`, and 
 
 - Do not commit `.env`.
 - Auth uses Better Auth email/password only. No OAuth, 2FA, or magic links in Phase 1.
-- Workspace, RBAC, tickets, and realtime features are intentionally not implemented in this phase.
+- Phase 2 adds internal workspace provisioning, tickets, ticket messages, and API auth behavior aligned with `docs/phase-2-spec.md`.
 - Redis is deferred until background jobs are introduced in a later phase.

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db/prisma';
 import { getTicketById, TicketNotFoundError } from '@/lib/tickets/server';
+import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -11,6 +12,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
       throw notFound();
+    }
+    if (error instanceof UnauthorizedError) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json({ error: 'Failed to load ticket' }, { status: 500 });
   }
@@ -65,6 +72,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
       throw notFound();
+    }
+    if (error instanceof UnauthorizedError) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (error instanceof ForbiddenError) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json({ error: 'Failed to update ticket' }, { status: 500 });
   }
