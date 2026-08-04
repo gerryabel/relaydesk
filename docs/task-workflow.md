@@ -13,12 +13,12 @@ Before making any changes:
 1. Verify the current git branch.
 2. Verify the working tree is clean.
 3. Review the task requirements.
-4. Read the following documents:
+4. Read the following documents (if available):
 
-* docs/project-overview.md
-* docs/development-workflow.md
-* docs/phase-*-spec.md (relevant phase)
-* this document
+- docs/development-workflow.md
+- docs/task-workflow.md
+- docs/engineering-principles.md
+- docs/phase-*-spec.md (relevant phase)
 
 Understand the existing implementation before making changes.
 
@@ -58,14 +58,21 @@ Before implementation:
 
 Before writing code:
 
-* inspect the existing implementation
-* identify reusable components
-* identify reusable utilities
-* identify reusable server actions
-* identify reusable validation schemas
-* identify reusable tests
-* identify existing project conventions
-* Identify potential risks
+- inspect the existing implementation
+- compare the existing implementation against the relevant Phase specification
+- identify existing functionality that already satisfies the specification
+- identify implementation gaps that still need to be completed
+- identify reusable components
+- identify reusable utilities
+- identify reusable server actions
+- identify reusable validation schemas
+- identify reusable tests
+- identify existing project conventions
+- identify potential risks
+
+Do not recreate existing functionality.
+
+Only implement missing or non-compliant functionality within the approved scope.
 
 Then produce a concise implementation plan describing:
 
@@ -73,7 +80,15 @@ Then produce a concise implementation plan describing:
 * components to reuse
 * overall implementation approach
 
+The implementation plan must clearly distinguish:
+
+- Existing functionality
+- Missing functionality
+- Planned changes
+
 Wait for user approval before making any code changes.
+
+Do not proceed to implementation until the implementation plan has been explicitly approved.
 
 ---
 
