@@ -90,7 +90,7 @@ describe('ticket services', () => {
       .mockResolvedValue([fakeTicket] as never);
 
     try {
-      const tickets = await getTickets('open', 'medium');
+      const tickets = await getTickets({ status: 'open', priority: 'medium' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: { workspaceId: 'workspace-123', status: 'open', priority: 'medium' },
