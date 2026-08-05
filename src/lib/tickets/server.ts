@@ -52,18 +52,22 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
 
 type StatusFilter = z.infer<typeof ticketStatusSchema> | undefined;
 type PriorityFilter = z.infer<typeof ticketPrioritySchema> | undefined;
+type SearchFilter = string | undefined;
 
 export async function getTickets(
   status?: StatusFilter,
-  priority?: PriorityFilter
+  priority?: PriorityFilter,
+  search?: SearchFilter
 ): Promise<TicketWithCreator[]> {
   const membership = await getCurrentMembership();
+  const trimmedSearch = search?.trim();
 
   return prisma.ticket.findMany({
     where: {
       workspaceId: membership.workspaceId,
       ...(status ? { status } : {}),
       ...(priority ? { priority } : {}),
+      ...(trimmedSearch ? { title: { contains: trimmedSearch, mode: 'insensitive' } } : {}),
     },
     include: {
       createdBy: true,

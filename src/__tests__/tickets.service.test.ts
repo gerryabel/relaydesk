@@ -10,6 +10,9 @@ import {
 } from '@/lib/tickets/server';
 import { getCurrentMembership } from '@/lib/workspace/server';
 import type { UpdateTicketInput } from '@/lib/tickets/schema';
+import { ticketFiltersSchema } from '@/lib/tickets/schema';
+import type { TicketFiltersInput } from '@/lib/tickets/schema';
+import { parseFilters } from '@/app/dashboard/tickets/page';
 
 const fakeMembership = {
   userId: 'user-123',
@@ -217,6 +220,171 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-1')).rejects.toThrow('No workspace membership found');
     } finally {
       mockedGetCurrentMembership.mockReset();
+    }
+  });
+
+  it('getTickets filters by status only', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+
+    try {
+      await getTickets('closed', undefined, undefined);
+
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'closed' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets filters by priority only', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+
+    try {
+      await getTickets(undefined, 'high', undefined);
+
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', priority: 'high' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines search and status filters', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+
+    try {
+      await getTickets('open', undefined, 'Deskripsi');
+
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          title: { contains: 'Deskripsi', mode: 'insensitive' },
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines search and priority filters', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+
+    try {
+      await getTickets(undefined, 'low', 'Judul Tiket');
+
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          priority: 'low',
+          title: { contains: 'Judul Tiket', mode: 'insensitive' },
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines search, status, and priority filters', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+
+    try {
+      await getTickets('resolved', 'urgent', 'Pencarian');
+
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'resolved',
+          priority: 'urgent',
+          title: { contains: 'Pencarian', mode: 'insensitive' },
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+      });
+    } finally {
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets rejects invalid status enum', async () => {
+    await expect(getTickets('invalid' as never, undefined, undefined)).rejects.toThrow();
+  });
+
+  it('getTickets rejects invalid priority enum', async () => {
+    await expect(getTickets(undefined, 'invalid' as never, undefined)).rejects.toThrow();
+  });
+
+  it('ticketFiltersSchema rejects invalid status enum', () => {
+    expect(() =>
+      ticketFiltersSchema.parse({
+        search: 'Judul Tiket',
+        status: 'invalid' as TicketFiltersInput['status'],
+      })
+    ).toThrow();
+  });
+
+  it('ticketFiltersSchema rejects invalid priority enum', () => {
+    expect(() =>
+      ticketFiltersSchema.parse({
+        search: 'Judul Tiket',
+        priority: 'invalid' as TicketFiltersInput['priority'],
+      })
+    ).toThrow();
+  });
+
+  it('parseFilters preserves valid fields when one query parameter is invalid', () => {
+    const filters = parseFilters({
+      search: 'login',
+      status: 'INVALID',
+      priority: 'high',
+    } as Record<string, unknown>);
+
+    expect(filters).toEqual({ search: 'login', status: undefined, priority: 'high' });
+  });
+
+  it('parseFilters returns empty filters when all query parameters are invalid', () => {
+    const filters = parseFilters({
+      search: '',
+      status: 'INVALID',
+      priority: 'INVALID',
+    } as Record<string, unknown>);
+
+    expect(filters).toEqual({ search: '', status: undefined, priority: undefined });
+  });
+
+  it('does not return tickets from another workspace', async () => {
+    const findFirstSpy = vi
+      .spyOn(sharedPrisma.ticket, 'findFirst')
+      .mockResolvedValue(null as never);
+
+    try {
+      await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
+      expect(findFirstSpy).toHaveBeenCalledWith({
+        where: { id: 'ticket-2', workspaceId: 'workspace-123' },
+        include: { createdBy: true },
+      });
+    } finally {
+      findFirstSpy.mockRestore();
     }
   });
 });

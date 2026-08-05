@@ -37,3 +37,23 @@ export const updateTicketSchema = z.object({
 
 export type CreateTicketInput = z.infer<typeof createTicketSchema>;
 export type UpdateTicketInput = z.infer<typeof updateTicketSchema>;
+
+export const ticketFiltersSchema = z.object({
+  search: z.string().trim().max(200, 'Pencarian maksimal 200 karakter').optional(),
+  status: ticketStatusSchema.optional(),
+  priority: ticketPrioritySchema.optional(),
+});
+
+export const ticketSearchSchema = z.object({
+  search: z.string().trim().max(200, 'Pencarian maksimal 200 karakter').optional(),
+});
+
+export const ticketStatusFilterSchema = z.object({
+  status: ticketStatusSchema.optional(),
+});
+
+export const ticketPriorityFilterSchema = z.object({
+  priority: ticketPrioritySchema.optional(),
+});
+
+export type TicketFiltersInput = z.infer<typeof ticketFiltersSchema>;
