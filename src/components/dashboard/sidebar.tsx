@@ -21,7 +21,7 @@ export default function Sidebar() {
           RelayDesk
         </Link>
       </div>
-      <nav className="flex-1 px-2 py-4">
+      <nav className="flex-1 px-2 py-4" aria-label="Dashboard">
         <ul className="flex flex-col gap-1">
           {navigation.map((item) => {
             const isActive =

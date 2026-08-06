@@ -121,12 +121,13 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
 
         {hasActiveFilters ? (
           <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
-            <span>Filter aktif:</span>
+            <span id="active-filters-label">Filter aktif:</span>
             {filters.search ? (
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Pencarian: {filters.search}
                 <Link
                   href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '')}`}
+                  aria-label={`Hapus filter pencarian: ${filters.search}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
                   ×
@@ -138,6 +139,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
                 Status: {filters.status}
                 <Link
                   href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '')}`}
+                  aria-label={`Hapus filter status: ${filters.status}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
                   ×
@@ -149,13 +151,18 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
                 Prioritas: {filters.priority}
                 <Link
                   href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '')}`}
+                  aria-label={`Hapus filter prioritas: ${filters.priority}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
                   ×
                 </Link>
               </span>
             ) : null}
-            <Link href="/dashboard/tickets" className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+            <Link
+              href="/dashboard/tickets"
+              aria-label="Reset semua filter"
+              className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
               Reset semua
             </Link>
           </div>
@@ -189,11 +196,11 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               ))}
             </div>
 
-            <nav className="flex items-center justify-between gap-3 text-sm">
-              <span className="text-neutral-600 dark:text-neutral-300">
+            <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
+              <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
                 Halaman {result.page} dari {result.totalPages} • {result.total} tiket
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {result.hasPreviousPage ? (
                   <Link
                     href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}

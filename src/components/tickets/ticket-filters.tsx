@@ -64,12 +64,13 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
     <form
       className={`flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between ${controlsClassName ?? ''}`}
       onSubmit={(event) => event.preventDefault()}
+      aria-label="Filter tiket"
     >
       <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-neutral-600 dark:text-neutral-300">Pencarian</span>
           <input
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             placeholder="Cari judul tiket..."
             defaultValue={search}
             onChange={(event) => {
@@ -82,7 +83,7 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-neutral-600 dark:text-neutral-300">Status</span>
           <select
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={status}
             onChange={(event) => {
               const query = buildQueryString(searchParams, search, event.target.value, priority);
@@ -100,7 +101,7 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-neutral-600 dark:text-neutral-300">Prioritas</span>
           <select
-            className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={priority}
             onChange={(event) => {
               const query = buildQueryString(searchParams, search, status, event.target.value);
