@@ -66,7 +66,6 @@ Accessibility work includes manual checks for keyboard flow, focus visibility, a
 - `src/components/ui/select.tsx`
 - `src/components/tickets/ticket-filters.tsx`
 - `src/components/tickets/ticket-sort-control.tsx`
-- `src/components/tickets/ticket-pagination.tsx`
 - `src/app/dashboard/tickets/page.tsx`
 - `src/app/dashboard/page.tsx`
 

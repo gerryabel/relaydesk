@@ -65,7 +65,7 @@ Filtered ticket lists are supported through API route handlers as well as direct
 
 ## Files Added
 
-- `src/lib/tickets/filters.ts`
+- `src/lib/tickets/schema.ts`
 - `src/components/tickets/ticket-filters.tsx`
 - `docs/phase-3-task-2.md`
 

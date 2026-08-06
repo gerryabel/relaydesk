@@ -72,4 +72,4 @@ This task avoids feature work. Any required code changes are limited to small do
 
 ## Next Task
 
-Phase 4 or next product phase as defined by the project roadmap.
+Next product phase as defined by the project roadmap.

@@ -66,13 +66,11 @@ API route handlers support the same pagination parameters as the page. This pres
 ## Files Added
 
 - `src/lib/tickets/pagination.ts`
-- `src/components/tickets/ticket-pagination.tsx`
 - `docs/phase-3-task-4.md`
 
 ## Files Modified
 
-- `src/lib/tickets/search.ts`
-- `src/app/api/tickets/search/route.ts`
+- `src/lib/tickets/server.ts`
 - `src/app/dashboard/tickets/page.tsx`
 
 ## Lessons Learned
