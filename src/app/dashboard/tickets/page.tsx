@@ -7,10 +7,6 @@ import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchem
 import type { TicketFiltersInput } from '@/lib/tickets/schema';
 import Link from 'next/link';
 
-type FilteredTicketsPageProps = {
-  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
-};
-
 export function parseFilters(resolved: Record<string, unknown>): TicketFiltersInput {
   const search = (resolved.q ?? resolved.search) as string | undefined;
   const searchParsed = ticketSearchSchema.safeParse({ search });
@@ -35,11 +31,70 @@ function parseLimit(resolved: Record<string, unknown>) {
   return Math.min(safe, 100);
 }
 
-export default async function FilteredTicketsPage({ searchParams }: FilteredTicketsPageProps) {
+function buildQueryString(
+  searchParams: URLSearchParams,
+  nextSearch: string,
+  nextStatus: string,
+  nextPriority: string
+) {
+  const params = new URLSearchParams(searchParams.toString());
+
+  if (!nextSearch) {
+    params.delete('search');
+  } else {
+    params.set('search', nextSearch);
+  }
+
+  if (!nextStatus) {
+    params.delete('status');
+  } else {
+    params.set('status', nextStatus);
+  }
+
+  if (!nextPriority) {
+    params.delete('priority');
+  } else {
+    params.set('priority', nextPriority);
+  }
+
+  return params.toString();
+}
+
+function buildResolvedSearchParams(resolved: Record<string, unknown>) {
+  const search = (resolved.q ?? resolved.search) as string | undefined;
+  const status = (resolved.status as string | undefined) ?? '';
+  const priority = (resolved.priority as string | undefined) ?? '';
+
+  return new URLSearchParams({
+    ...(search ? { search } : {}),
+    ...(status ? { status } : {}),
+    ...(priority ? { priority } : {}),
+  });
+}
+
+function buildPaginationQuery(resolved: Record<string, unknown>, page: number, limit: number) {
+  const params = new URLSearchParams({
+    ...Object.fromEntries(
+      Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)
+    ),
+    page: String(page),
+    limit: String(limit),
+  });
+
+  return params.toString();
+}
+
+
+type FilteredTicketsPagePropsResolved = {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+};
+
+export default async function FilteredTicketsPage({ searchParams }: FilteredTicketsPagePropsResolved) {
   const resolved = searchParams ? await searchParams : {};
   const filters = parseFilters(resolved);
   const page = parsePage(resolved);
   const limit = parseLimit(resolved);
+  const resolvedSearchParams = buildResolvedSearchParams(resolved);
 
   const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search, page, limit });
 
@@ -57,30 +112,52 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
           </div>
         </header>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <TicketFilterControls />
-
-          <TicketSortControls />
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <TicketFilterControls />
+            <TicketSortControls />
+          </div>
         </div>
 
         {hasActiveFilters ? (
-          <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+          <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
             <span>Filter aktif:</span>
             {filters.search ? (
-              <span className="rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Pencarian: {filters.search}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '')}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
               </span>
             ) : null}
             {filters.status ? (
-              <span className="rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Status: {filters.status}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '')}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
               </span>
             ) : null}
             {filters.priority ? (
-              <span className="rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Prioritas: {filters.priority}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '')}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
               </span>
             ) : null}
+            <Link href="/dashboard/tickets" className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100">
+              Reset semua
+            </Link>
           </div>
         ) : null}
 
@@ -92,7 +169,17 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
                 ? 'Coba ubah pencarian atau filter untuk melihat hasil lain.'
                 : 'Buat tiket pertama untuk mulai melacak pekerjaan atau permintaan.'
             }
-            action={hasActiveFilters ? null : <Link href="/dashboard/tickets/new" className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-3 py-2 text-sm text-white">Create ticket</Link>}
+            action={
+              hasActiveFilters ? (
+                <Link href="/dashboard/tickets" className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100">
+                  Reset filter
+                </Link>
+              ) : (
+                <Link href="/dashboard/tickets/new" className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-3 py-2 text-sm text-white">
+                  Create ticket
+                </Link>
+              )
+            }
           />
         ) : (
           <>
@@ -106,23 +193,37 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="text-neutral-600 dark:text-neutral-300">
                 Halaman {result.page} dari {result.totalPages} • {result.total} tiket
               </span>
-
               <div className="flex items-center gap-2">
-                <Link
-                  href={`?${new URLSearchParams({ ...Object.fromEntries(Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)), page: String(result.page - 1), limit: String(result.limit) }).toString()}`}
-                  aria-disabled={!result.hasPreviousPage}
-                  className={`inline-flex items-center justify-center rounded-md border px-3 py-2 ${result.hasPreviousPage ? 'border-neutral-300 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100' : 'cursor-not-allowed opacity-60'}`}
-                >
-                  Sebelumnya
-                </Link>
-
-                <Link
-                  href={`?${new URLSearchParams({ ...Object.fromEntries(Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)), page: String(result.page + 1), limit: String(result.limit) }).toString()}`}
-                  aria-disabled={!result.hasNextPage}
-                  className={`inline-flex items-center justify-center rounded-md border px-3 py-2 ${result.hasNextPage ? 'border-neutral-300 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100' : 'cursor-not-allowed opacity-60'}`}
-                >
-                  Berikutnya
-                </Link>
+                {result.hasPreviousPage ? (
+                  <Link
+                    href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+                  >
+                    Sebelumnya
+                  </Link>
+                ) : (
+                  <span
+                    aria-disabled="true"
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+                  >
+                    Sebelumnya
+                  </span>
+                )}
+                {result.hasNextPage ? (
+                  <Link
+                    href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+                  >
+                    Berikutnya
+                  </Link>
+                ) : (
+                  <span
+                    aria-disabled="true"
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+                  >
+                    Berikutnya
+                  </span>
+                )}
               </div>
             </nav>
           </>
