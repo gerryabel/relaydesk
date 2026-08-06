@@ -2,21 +2,25 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ForbiddenError, UnauthorizedError } from '@/lib/workspace/server';
 import { getTickets } from '@/lib/tickets/server';
-import { ticketSearchSchema, normalizeTicketSearch } from '@/lib/tickets/search';
+import { ticketQuerySchema, normalizeTicketQuery } from '@/lib/tickets/search';
+import { normalizeTicketPagination } from '@/lib/tickets/pagination';
 import { ticketStatusSchema, ticketPrioritySchema } from '@/lib/tickets/schema';
+import type { TicketPaginationResult } from '@/lib/tickets/pagination';
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const rawQuery = searchParams.get('q');
     const rawSort = searchParams.get('sort');
-    const parsedQuery = ticketSearchSchema.safeParse({ q: rawQuery ?? undefined, sort: rawSort ?? undefined });
+    const rawPage = searchParams.get('page');
+    const rawLimit = searchParams.get('limit');
+    const parsedQuery = ticketQuerySchema.safeParse({ q: rawQuery ?? undefined, sort: rawSort ?? undefined });
 
     if (!parsedQuery.success) {
-      return NextResponse.json({ error: parsedQuery.error.issues[0]?.message ?? 'Invalid search' }, { status: 400 });
+      return NextResponse.json({ error: parsedQuery.error.issues[0]?.message ?? 'Invalid query' }, { status: 400 });
     }
 
-    const normalized = normalizeTicketSearch(parsedQuery.data);
+    const normalized = normalizeTicketQuery(parsedQuery.data);
 
     let status: z.infer<typeof ticketStatusSchema> | undefined;
     if (searchParams.has('status')) {
@@ -36,14 +40,21 @@ export async function GET(request: Request) {
       priority = result.data;
     }
 
-    const tickets = await getTickets({
+    const pagination = normalizeTicketPagination({
+      page: rawPage ? Number(rawPage) : undefined,
+      limit: rawLimit ? Number(rawLimit) : undefined,
+    });
+
+    const result: TicketPaginationResult<Awaited<ReturnType<typeof getTickets>>['data'][number]> = await getTickets({
       ...(status ? { status } : {}),
       ...(priority ? { priority } : {}),
       search: normalized.q ? { q: normalized.q } : undefined,
       sort: normalized.sort,
+      page: pagination.page,
+      limit: pagination.limit,
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof UnauthorizedError) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

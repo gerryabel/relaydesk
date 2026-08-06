@@ -91,10 +91,18 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
 
     try {
       const tickets = await getTickets({ status: 'open', priority: 'medium' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          priority: 'medium',
+        },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
           workspaceId: 'workspace-123',
@@ -103,10 +111,14 @@ describe('ticket services', () => {
         },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
-      expect(tickets).toHaveLength(1);
+      expect(tickets.data).toHaveLength(1);
+      expect(tickets.total).toBe(1);
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 
@@ -231,17 +243,24 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
       await getTickets({ status: 'closed' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'closed' },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: { workspaceId: 'workspace-123', status: 'closed' },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 
@@ -249,17 +268,24 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
       await getTickets({ priority: 'high' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', priority: 'high' },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: { workspaceId: 'workspace-123', priority: 'high' },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 
@@ -267,10 +293,18 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
       await getTickets({ status: 'open', search: 'Deskripsi' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          title: { contains: 'Deskripsi', mode: 'insensitive' },
+        },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
           workspaceId: 'workspace-123',
@@ -279,9 +313,12 @@ describe('ticket services', () => {
         },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 
@@ -289,10 +326,18 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
       await getTickets({ priority: 'low', search: 'Judul Tiket' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          priority: 'low',
+          title: { contains: 'Judul Tiket', mode: 'insensitive' },
+        },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
           workspaceId: 'workspace-123',
@@ -301,9 +346,12 @@ describe('ticket services', () => {
         },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 
@@ -311,10 +359,19 @@ describe('ticket services', () => {
     const findManySpy = vi
       .spyOn(sharedPrisma.ticket, 'findMany')
       .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
       await getTickets({ status: 'resolved', priority: 'urgent', search: 'Pencarian' });
 
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'resolved',
+          priority: 'urgent',
+          title: { contains: 'Pencarian', mode: 'insensitive' },
+        },
+      });
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
           workspaceId: 'workspace-123',
@@ -324,9 +381,128 @@ describe('ticket services', () => {
         },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
       });
     } finally {
       findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets paginates the first page', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ page: 1, limit: 1 });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 1,
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(1);
+      expect(result.total).toBe(1);
+      expect(result.totalPages).toBe(1);
+      expect(result.hasPreviousPage).toBe(false);
+      expect(result.hasNextPage).toBe(false);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets paginates the last page', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(2 as never);
+
+    try {
+      const result = await getTickets({ page: 2, limit: 1 });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 1,
+        take: 1,
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.page).toBe(2);
+      expect(result.totalPages).toBe(2);
+      expect(result.hasPreviousPage).toBe(true);
+      expect(result.hasNextPage).toBe(false);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets returns empty data for an invalid page', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      const result = await getTickets({ page: 5, limit: 10 });
+
+      expect(result.data).toHaveLength(0);
+      expect(result.page).toBe(1);
+      expect(result.total).toBe(0);
+      expect(result.totalPages).toBe(1);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves pagination with search and filters', async () => {
+    const findManySpy = vi
+      .spyOn(sharedPrisma.ticket, 'findMany')
+      .mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ status: 'open', search: 'Pencarian', sort: { field: 'title', direction: 'asc' }, page: 1, limit: 10 });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          title: { contains: 'Pencarian', mode: 'insensitive' },
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          title: { contains: 'Pencarian', mode: 'insensitive' },
+        },
+        include: { createdBy: true },
+        orderBy: { title: 'asc' },
+        skip: 0,
+        take: 10,
+      });
+      expect(result.data).toHaveLength(1);
+      expect(result.total).toBe(1);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
     }
   });
 

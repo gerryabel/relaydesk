@@ -24,11 +24,24 @@ export function parseFilters(resolved: Record<string, unknown>): TicketFiltersIn
   };
 }
 
+function parsePage(resolved: Record<string, unknown>) {
+  const raw = Number((resolved.page ?? resolved.p ?? '1') as unknown as number);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
+}
+
+function parseLimit(resolved: Record<string, unknown>) {
+  const raw = Number((resolved.limit ?? resolved.per_page ?? '20') as unknown as number);
+  const safe = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 20;
+  return Math.min(safe, 100);
+}
+
 export default async function FilteredTicketsPage({ searchParams }: FilteredTicketsPageProps) {
   const resolved = searchParams ? await searchParams : {};
   const filters = parseFilters(resolved);
+  const page = parsePage(resolved);
+  const limit = parseLimit(resolved);
 
-  const tickets = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search });
+  const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search, page, limit });
 
   const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority);
 
@@ -71,7 +84,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
           </div>
         ) : null}
 
-        {tickets.length === 0 ? (
+        {result.data.length === 0 ? (
           <EmptyState
             title={hasActiveFilters ? 'Tidak ada tiket yang cocok' : 'Belum ada tiket'}
             description={
@@ -82,11 +95,37 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
             action={hasActiveFilters ? null : <Link href="/dashboard/tickets/new" className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-3 py-2 text-sm text-white">Create ticket</Link>}
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {tickets.map((ticket) => (
-              <TicketCard key={ticket.id} ticket={ticket} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-4">
+              {result.data.map((ticket) => (
+                <TicketCard key={ticket.id} ticket={ticket} />
+              ))}
+            </div>
+
+            <nav className="flex items-center justify-between gap-3 text-sm">
+              <span className="text-neutral-600 dark:text-neutral-300">
+                Halaman {result.page} dari {result.totalPages} • {result.total} tiket
+              </span>
+
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`?${new URLSearchParams({ ...Object.fromEntries(Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)), page: String(result.page - 1), limit: String(result.limit) }).toString()}`}
+                  aria-disabled={!result.hasPreviousPage}
+                  className={`inline-flex items-center justify-center rounded-md border px-3 py-2 ${result.hasPreviousPage ? 'border-neutral-300 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100' : 'cursor-not-allowed opacity-60'}`}
+                >
+                  Sebelumnya
+                </Link>
+
+                <Link
+                  href={`?${new URLSearchParams({ ...Object.fromEntries(Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)), page: String(result.page + 1), limit: String(result.limit) }).toString()}`}
+                  aria-disabled={!result.hasNextPage}
+                  className={`inline-flex items-center justify-center rounded-md border px-3 py-2 ${result.hasNextPage ? 'border-neutral-300 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100' : 'cursor-not-allowed opacity-60'}`}
+                >
+                  Berikutnya
+                </Link>
+              </div>
+            </nav>
+          </>
         )}
       </div>
     </div>

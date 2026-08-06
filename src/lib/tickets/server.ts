@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { createTicketSchema, updateTicketSchema, ticketStatusSchema, ticketPrioritySchema } from '@/lib/tickets/schema';
 import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema';
 import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
+import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/tickets/pagination';
+import type { Prisma } from '@/generated/prisma';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -64,7 +66,43 @@ type TicketGetOptions = {
   limit?: number;
 };
 
-export async function getTickets(options: TicketGetOptions): Promise<TicketWithCreator[]> {
+function buildTicketWhere(options: {
+  membership: { workspaceId: string };
+  status?: StatusFilter;
+  priority?: PriorityFilter;
+  query?: string;
+  useOrSearch?: boolean;
+}): WhereInput {
+  const { membership, status, priority, query, useOrSearch } = options;
+
+  return {
+    workspaceId: membership.workspaceId,
+    ...(status ? { status } : {}),
+    ...(priority ? { priority } : {}),
+    ...(query
+      ? useOrSearch
+        ? {
+            OR: [
+              { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+              { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+            ],
+          }
+        : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
+      : {}),
+  };
+}
+
+type WhereInput = Pick<Prisma.TicketWhereInput, 'AND' | 'OR' | 'NOT'> & {
+  workspaceId: Prisma.TicketWhereInput['workspaceId'];
+  status?: Prisma.TicketWhereInput['status'];
+  priority?: Prisma.TicketWhereInput['priority'];
+};
+
+function asTicketWhere(where: WhereInput): Prisma.TicketWhereInput {
+  return where as Prisma.TicketWhereInput;
+}
+
+export async function getTickets(options: TicketGetOptions = {}): Promise<TicketPaginationResult<TicketWithCreator>> {
   const membership = await getCurrentMembership();
   const query =
     typeof options.search === 'string'
@@ -75,26 +113,41 @@ export async function getTickets(options: TicketGetOptions): Promise<TicketWithC
   const useOrSearch = options.search !== undefined && !(typeof options.search === 'string');
 
   const normalizedSort = normalizeTicketSort(options.sort);
+  const normalizedPagination = normalizeTicketPagination({ page: options.page, limit: options.limit });
+  const { page, limit } = normalizedPagination;
 
-  return prisma.ticket.findMany({
-    where: {
-      workspaceId: membership.workspaceId,
-      ...(options.status ? { status: options.status } : {}),
-      ...(options.priority ? { priority: options.priority } : {}),
-      ...(query
-        ? useOrSearch
-          ? {
-              OR: [
-                { title: { contains: query, mode: 'insensitive' } },
-                { description: { contains: query, mode: 'insensitive' } },
-              ],
-            }
-          : { title: { contains: query, mode: 'insensitive' } }
-        : {}),
-    },
-    include: { createdBy: true },
-    orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
-  }) as Promise<TicketWithCreator[]>;
+  const where = buildTicketWhere({
+    membership,
+    status: options.status,
+    priority: options.priority,
+    query,
+    useOrSearch,
+  });
+
+  const total = await prisma.ticket.count({ where: asTicketWhere(where) });
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const normalizedPage = Math.min(page, totalPages);
+  const skip = (normalizedPage - 1) * limit;
+
+  const tickets = await prisma.ticket
+    .findMany({
+      where: asTicketWhere(where),
+      include: { createdBy: true },
+      orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
+      skip,
+      take: limit,
+    })
+    .then((items) => items as TicketWithCreator[]);
+
+  return {
+    data: tickets,
+    page: normalizedPage,
+    limit,
+    total,
+    totalPages,
+    hasPreviousPage: normalizedPage > 1,
+    hasNextPage: normalizedPage < totalPages,
+  };
 }
 
 export async function getTicketById(id: string): Promise<TicketWithCreator> {
