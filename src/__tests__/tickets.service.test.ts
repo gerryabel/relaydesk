@@ -93,10 +93,14 @@ describe('ticket services', () => {
       .mockResolvedValue([fakeTicket] as never);
 
     try {
-      const tickets = await getTickets('open', 'medium');
+      const tickets = await getTickets({ status: 'open', priority: 'medium' });
 
       expect(findManySpy).toHaveBeenCalledWith({
-        where: { workspaceId: 'workspace-123', status: 'open', priority: 'medium' },
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          priority: 'medium',
+        },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
       });
@@ -229,7 +233,7 @@ describe('ticket services', () => {
       .mockResolvedValue([] as never);
 
     try {
-      await getTickets('closed', undefined, undefined);
+      await getTickets({ status: 'closed' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: { workspaceId: 'workspace-123', status: 'closed' },
@@ -247,7 +251,7 @@ describe('ticket services', () => {
       .mockResolvedValue([] as never);
 
     try {
-      await getTickets(undefined, 'high', undefined);
+      await getTickets({ priority: 'high' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: { workspaceId: 'workspace-123', priority: 'high' },
@@ -265,7 +269,7 @@ describe('ticket services', () => {
       .mockResolvedValue([] as never);
 
     try {
-      await getTickets('open', undefined, 'Deskripsi');
+      await getTickets({ status: 'open', search: 'Deskripsi' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
@@ -287,7 +291,7 @@ describe('ticket services', () => {
       .mockResolvedValue([] as never);
 
     try {
-      await getTickets(undefined, 'low', 'Judul Tiket');
+      await getTickets({ priority: 'low', search: 'Judul Tiket' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
@@ -309,7 +313,7 @@ describe('ticket services', () => {
       .mockResolvedValue([] as never);
 
     try {
-      await getTickets('resolved', 'urgent', 'Pencarian');
+      await getTickets({ status: 'resolved', priority: 'urgent', search: 'Pencarian' });
 
       expect(findManySpy).toHaveBeenCalledWith({
         where: {
@@ -327,11 +331,11 @@ describe('ticket services', () => {
   });
 
   it('getTickets rejects invalid status enum', async () => {
-    await expect(getTickets('invalid' as never, undefined, undefined)).rejects.toThrow();
+    await expect(getTickets({ status: 'invalid' } as never)).rejects.toThrow();
   });
 
   it('getTickets rejects invalid priority enum', async () => {
-    await expect(getTickets(undefined, 'invalid' as never, undefined)).rejects.toThrow();
+    await expect(getTickets({ priority: 'invalid' } as never)).rejects.toThrow();
   });
 
   it('ticketFiltersSchema rejects invalid status enum', () => {

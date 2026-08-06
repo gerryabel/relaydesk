@@ -54,27 +54,43 @@ type StatusFilter = z.infer<typeof ticketStatusSchema> | undefined;
 type PriorityFilter = z.infer<typeof ticketPrioritySchema> | undefined;
 type SearchFilter = string | undefined;
 
-export async function getTickets(
-  status?: StatusFilter,
-  priority?: PriorityFilter,
-  search?: SearchFilter
-): Promise<TicketWithCreator[]> {
+type TicketGetOptions = {
+  status?: StatusFilter;
+  priority?: PriorityFilter;
+  search?: SearchFilter | { q?: string };
+  sort?: unknown;
+  page?: number;
+  limit?: number;
+};
+
+export async function getTickets(options: TicketGetOptions): Promise<TicketWithCreator[]> {
   const membership = await getCurrentMembership();
-  const trimmedSearch = search?.trim();
+  const query =
+    typeof options.search === 'string'
+      ? options.search.trim()
+      : options.search && typeof options.search === 'object'
+        ? options.search.q?.trim()
+        : undefined;
+  const useOrSearch = options.search !== undefined && !(typeof options.search === 'string');
 
   return prisma.ticket.findMany({
     where: {
       workspaceId: membership.workspaceId,
-      ...(status ? { status } : {}),
-      ...(priority ? { priority } : {}),
-      ...(trimmedSearch ? { title: { contains: trimmedSearch, mode: 'insensitive' } } : {}),
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.priority ? { priority: options.priority } : {}),
+      ...(query
+        ? useOrSearch
+          ? {
+              OR: [
+                { title: { contains: query, mode: 'insensitive' } },
+                { description: { contains: query, mode: 'insensitive' } },
+              ],
+            }
+          : { title: { contains: query, mode: 'insensitive' } }
+        : {}),
     },
-    include: {
-      createdBy: true,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
+    include: { createdBy: true },
+    orderBy: { createdAt: 'desc' },
   }) as Promise<TicketWithCreator[]>;
 }
 

@@ -11,7 +11,8 @@ type FilteredTicketsPageProps = {
 };
 
 export function parseFilters(resolved: Record<string, unknown>): TicketFiltersInput {
-  const searchParsed = ticketSearchSchema.safeParse({ search: resolved.search });
+  const search = (resolved.q ?? resolved.search) as string | undefined;
+  const searchParsed = ticketSearchSchema.safeParse({ search });
   const statusParsed = ticketStatusFilterSchema.safeParse({ status: resolved.status });
   const priorityParsed = ticketPriorityFilterSchema.safeParse({ priority: resolved.priority });
 
@@ -26,7 +27,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
   const resolved = searchParams ? await searchParams : {};
   const filters = parseFilters(resolved);
 
-  const tickets = await getTickets(filters.status, filters.priority, filters.search);
+  const tickets = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search });
 
   const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority);
 
