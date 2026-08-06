@@ -3,6 +3,7 @@ import { getCurrentMembership } from '@/lib/workspace/server';
 import { z } from 'zod';
 import { createTicketSchema, updateTicketSchema, ticketStatusSchema, ticketPrioritySchema } from '@/lib/tickets/schema';
 import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema';
+import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -58,7 +59,7 @@ type TicketGetOptions = {
   status?: StatusFilter;
   priority?: PriorityFilter;
   search?: SearchFilter | { q?: string };
-  sort?: unknown;
+  sort?: TicketSortInput | unknown;
   page?: number;
   limit?: number;
 };
@@ -72,6 +73,8 @@ export async function getTickets(options: TicketGetOptions): Promise<TicketWithC
         ? options.search.q?.trim()
         : undefined;
   const useOrSearch = options.search !== undefined && !(typeof options.search === 'string');
+
+  const normalizedSort = normalizeTicketSort(options.sort);
 
   return prisma.ticket.findMany({
     where: {
@@ -90,7 +93,7 @@ export async function getTickets(options: TicketGetOptions): Promise<TicketWithC
         : {}),
     },
     include: { createdBy: true },
-    orderBy: { createdAt: 'desc' },
+    orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
   }) as Promise<TicketWithCreator[]>;
 }
 

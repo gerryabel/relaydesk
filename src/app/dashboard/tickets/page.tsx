@@ -2,6 +2,7 @@ import { getTickets } from '@/lib/tickets/server';
 import TicketCard from '@/components/tickets/ticket-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import TicketFilterControls from '@/components/tickets/ticket-filters';
+import TicketSortControls from '@/components/tickets/ticket-sort-control';
 import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema } from '@/lib/tickets/schema';
 import type { TicketFiltersInput } from '@/lib/tickets/schema';
 import Link from 'next/link';
@@ -43,7 +44,11 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
           </div>
         </header>
 
-        <TicketFilterControls />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TicketFilterControls />
+
+          <TicketSortControls />
+        </div>
 
         {hasActiveFilters ? (
           <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">

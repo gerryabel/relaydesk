@@ -1,67 +1,10 @@
 # Phase 3 Task 3 — Sorting
 
-## Overview
+## Summary
 
-This task introduces deterministic sorting for ticket lists. After search and filters are available, sorting lets users control how matched tickets are ordered—for example, by newest first, priority, or status. The implementation stays within the existing ticket query boundary and reuses the workspace and authorization patterns established in earlier tasks.
+Implemented deterministic sorting for the ticket query pipeline.
 
-## Objectives
-
-- Add validated sort input handling for ticket list queries.
-- Extend the ticket query layer to compose search, filters, and sort safely.
-- Keep sort behavior centralized in the service or helper layer.
-- Preserve existing auth and workspace isolation guarantees.
-- Expose sort behavior through the ticket list API route.
-- Integrate sort controls into the ticket list UI without changing the overall layout.
-
-## Scope
-
-### In Scope
-
-- Sort field validation and normalization.
-- Workspace-scoped ticket sorting for ticket list queries.
-- Combined search, filter, and sort query composition.
-- API route support for sorted requests.
-- Sort controls added to the ticket list page.
-- Loading and empty state behavior when sort is applied.
-
-### Out of Scope
-
-- Multi-column sort.
-- Custom or user-defined sort rules.
-- Cross-workspace sort behavior.
-- Persistent sort preferences.
-- URL-synchronized sort state.
-- Performance indexing work or database-level migration changes.
-- Real-time sort updates.
-
-## Architecture Decisions
-
-### Single Default Sort With Explicit Alternatives
-
-The default sort remains stable and predictable, while explicit sort options are limited to a small set of allowed fields and directions. This avoids ambiguous ordering and keeps query behavior easy to test.
-
-### Service Layer Sort Mapping
-
-Sort input is translated into allowed query ordering inside the service or helper layer. Page and API consumers only pass normalized sort values; raw UI values never reach query construction directly.
-
-### Combined Query Composition
-
-Sort is applied after search and filters so all three behaviors can coexist without duplicating query logic. This keeps ticket list behavior consistent across API and page paths.
-
-### Controlled UI Controls
-
-Sort controls are added to the existing ticket list toolbar or header area using existing UI primitives. No new layout patterns are introduced in this task.
-
-### API Consistency
-
-API route handlers support the same sort input as the page. This prevents behavior drift between browser and API consumers.
-
-## Verification
-
-- `npm run lint` — passes.
-- `npm run typecheck` — passes.
-- `npm run build` — passes.
-- `npm run test` — passes.
+Pipeline: Search → Filter → Sort → Result
 
 ## Files Added
 
@@ -72,15 +15,41 @@ API route handlers support the same sort input as the page. This prevents behavi
 ## Files Modified
 
 - `src/lib/tickets/search.ts`
+- `src/lib/tickets/server.ts`
 - `src/app/api/tickets/search/route.ts`
 - `src/app/dashboard/tickets/page.tsx`
 
-## Lessons Learned
+## Architectural Decisions
 
-- Allowing only explicit sort fields reduces both security and UX risk compared to dynamic ordering from arbitrary input.
-- Composing search, filters, and sort in one query path is simpler to reason about than separate endpoints per behavior.
-- Reusing the same service layer for API and page queries prevents duplicated authorization logic.
+1. **Dedicated sort module**: Created `src/lib/tickets/sort.ts` to centralize sort field definitions, normalization, and Prisma `orderBy` mapping. This prevents arbitrary database field ordering.
+2. **Explicit field mapping only**: Allowed sort fields are `createdAt`, `updatedAt`, `title`, `priority`, and `status`. UI values never reach Prisma directly.
+3. **Search normalization extended**: Added `normalizeTicketSearch` in `search.ts` to compose search and sort parsing in one place.
+4. **Server applies sort after filters**: Modified `getTickets` in `server.ts` to map validated sort input into `orderBy` while preserving workspace isolation and authorization.
+5. **Shared validation**: API route and dashboard page both use the same sort schemas and helper functions.
+6. **Presentation-only UI component**: `ticket-sort-control.tsx` manages URL query state only; business logic stays in the helper/service layer.
+7. **Default sort fallback**: When no sort is provided or an invalid value is supplied, the system falls back to `createdAt desc`.
 
-## Next Task
+## Test Results
 
-Phase 3 Task 4 — Pagination
+- All 45 tests passed
+- No test files were broken by the changes
+
+## Verification Commands
+
+```bash
+npm run lint    # Passed
+npm run typecheck # Passed
+npm run build   # Passed
+npm run test    # Passed (45/45)
+```
+
+## Out-of-Scope Features Not Introduced
+
+- Pagination
+- URL synchronized sort state
+- Persistent user preferences
+- Multi-column sorting
+- Custom sorting rules
+- Database migrations
+- Performance/index optimizations
+- Realtime behavior
