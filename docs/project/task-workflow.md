@@ -15,10 +15,10 @@ Before making any changes:
 3. Review the task requirements.
 4. Read the following documents (if available):
 
-- docs/development-workflow.md
-- docs/task-workflow.md
-- docs/engineering-principles.md
-- docs/phase-*-spec.md (relevant phase)
+- docs/project/development-workflow.md
+- docs/project/task-workflow.md
+- docs/project/engineering-principles.md
+- docs/phase-{phase}/spec.md
 
 Understand the existing implementation before making changes.
 
@@ -157,7 +157,7 @@ If the task introduces new functionality:
 or create:
 
 ```
-docs/phase-x-task-y.md
+docs/phase-{phase}/task-{task}.md
 ```
 
 Documentation should reflect the final implementation.

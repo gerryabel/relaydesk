@@ -1,10 +1,104 @@
 import { getTickets } from '@/lib/tickets/server';
 import TicketCard from '@/components/tickets/ticket-card';
-import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import TicketFilterControls from '@/components/tickets/ticket-filters';
+import TicketSortControls from '@/components/tickets/ticket-sort-control';
+import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema } from '@/lib/tickets/schema';
+import type { TicketFiltersInput } from '@/lib/tickets/schema';
+import Link from 'next/link';
 
-export default async function TicketsPage() {
-  const tickets = await getTickets();
+export function parseFilters(resolved: Record<string, unknown>): TicketFiltersInput {
+  const search = (resolved.q ?? resolved.search) as string | undefined;
+  const searchParsed = ticketSearchSchema.safeParse({ search });
+  const statusParsed = ticketStatusFilterSchema.safeParse({ status: resolved.status });
+  const priorityParsed = ticketPriorityFilterSchema.safeParse({ priority: resolved.priority });
+
+  return {
+    search: searchParsed.success ? searchParsed.data.search : undefined,
+    status: statusParsed.success ? statusParsed.data.status : undefined,
+    priority: priorityParsed.success ? priorityParsed.data.priority : undefined,
+  };
+}
+
+function parsePage(resolved: Record<string, unknown>) {
+  const raw = Number((resolved.page ?? resolved.p ?? '1') as unknown as number);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
+}
+
+function parseLimit(resolved: Record<string, unknown>) {
+  const raw = Number((resolved.limit ?? resolved.per_page ?? '20') as unknown as number);
+  const safe = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 20;
+  return Math.min(safe, 100);
+}
+
+function buildQueryString(
+  searchParams: URLSearchParams,
+  nextSearch: string,
+  nextStatus: string,
+  nextPriority: string
+) {
+  const params = new URLSearchParams(searchParams.toString());
+
+  if (!nextSearch) {
+    params.delete('search');
+  } else {
+    params.set('search', nextSearch);
+  }
+
+  if (!nextStatus) {
+    params.delete('status');
+  } else {
+    params.set('status', nextStatus);
+  }
+
+  if (!nextPriority) {
+    params.delete('priority');
+  } else {
+    params.set('priority', nextPriority);
+  }
+
+  return params.toString();
+}
+
+function buildResolvedSearchParams(resolved: Record<string, unknown>) {
+  const search = (resolved.q ?? resolved.search) as string | undefined;
+  const status = (resolved.status as string | undefined) ?? '';
+  const priority = (resolved.priority as string | undefined) ?? '';
+
+  return new URLSearchParams({
+    ...(search ? { search } : {}),
+    ...(status ? { status } : {}),
+    ...(priority ? { priority } : {}),
+  });
+}
+
+function buildPaginationQuery(resolved: Record<string, unknown>, page: number, limit: number) {
+  const params = new URLSearchParams({
+    ...Object.fromEntries(
+      Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)
+    ),
+    page: String(page),
+    limit: String(limit),
+  });
+
+  return params.toString();
+}
+
+
+type FilteredTicketsPagePropsResolved = {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+};
+
+export default async function FilteredTicketsPage({ searchParams }: FilteredTicketsPagePropsResolved) {
+  const resolved = searchParams ? await searchParams : {};
+  const filters = parseFilters(resolved);
+  const page = parsePage(resolved);
+  const limit = parseLimit(resolved);
+  const resolvedSearchParams = buildResolvedSearchParams(resolved);
+
+  const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search, page, limit });
+
+  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -16,21 +110,130 @@ export default async function TicketsPage() {
               Kelola dan lacak tiket di workspace kamu.
             </p>
           </div>
-          <Button href="/dashboard/tickets/new">New ticket</Button>
         </header>
 
-        {tickets.length === 0 ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <TicketFilterControls />
+            <TicketSortControls />
+          </div>
+        </div>
+
+        {hasActiveFilters ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+            <span id="active-filters-label">Filter aktif:</span>
+            {filters.search ? (
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+                Pencarian: {filters.search}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '')}`}
+                  aria-label={`Hapus filter pencarian: ${filters.search}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
+              </span>
+            ) : null}
+            {filters.status ? (
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+                Status: {filters.status}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '')}`}
+                  aria-label={`Hapus filter status: ${filters.status}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
+              </span>
+            ) : null}
+            {filters.priority ? (
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+                Prioritas: {filters.priority}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '')}`}
+                  aria-label={`Hapus filter prioritas: ${filters.priority}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
+              </span>
+            ) : null}
+            <Link
+              href="/dashboard/tickets"
+              aria-label="Reset semua filter"
+              className="text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+            >
+              Reset semua
+            </Link>
+          </div>
+        ) : null}
+
+        {result.data.length === 0 ? (
           <EmptyState
-            title="Belum ada tiket"
-            description="Buat tiket pertama untuk mulai melacak pekerjaan atau permintaan."
-            action={<Button href="/dashboard/tickets/new">Create ticket</Button>}
+            title={hasActiveFilters ? 'Tidak ada tiket yang cocok' : 'Belum ada tiket'}
+            description={
+              hasActiveFilters
+                ? 'Coba ubah pencarian atau filter untuk melihat hasil lain.'
+                : 'Buat tiket pertama untuk mulai melacak pekerjaan atau permintaan.'
+            }
+            action={
+              hasActiveFilters ? (
+                <Link href="/dashboard/tickets" className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 text-sm hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100">
+                  Reset filter
+                </Link>
+              ) : (
+                <Link href="/dashboard/tickets/new" className="inline-flex items-center justify-center rounded-md bg-neutral-900 px-3 py-2 text-sm text-white">
+                  Create ticket
+                </Link>
+              )
+            }
           />
         ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {tickets.map((ticket) => (
-              <TicketCard key={ticket.id} ticket={ticket} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-4">
+              {result.data.map((ticket) => (
+                <TicketCard key={ticket.id} ticket={ticket} />
+              ))}
+            </div>
+
+            <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
+              <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
+                Halaman {result.page} dari {result.totalPages} • {result.total} tiket
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                {result.hasPreviousPage ? (
+                  <Link
+                    href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+                  >
+                    Sebelumnya
+                  </Link>
+                ) : (
+                  <span
+                    aria-disabled="true"
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+                  >
+                    Sebelumnya
+                  </span>
+                )}
+                {result.hasNextPage ? (
+                  <Link
+                    href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+                  >
+                    Berikutnya
+                  </Link>
+                ) : (
+                  <span
+                    aria-disabled="true"
+                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+                  >
+                    Berikutnya
+                  </span>
+                )}
+              </div>
+            </nav>
+          </>
         )}
       </div>
     </div>

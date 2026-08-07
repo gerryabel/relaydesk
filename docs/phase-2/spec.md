@@ -13,7 +13,7 @@ Phase 2 delivers an internal workspace ticketing MVP. An authenticated user owns
 ## 3. Approved decisions
 - Preserve ticket/message authorship records when a `User` is deleted via `onDelete: SetNull` for `createdById`.
 - Add Vitest as the test framework with scripts `test` and `test:watch`.
-- Save the canonical specification at `docs/phase-2-spec.md`.
+- Save the canonical specification at `docs/phase-2/spec.md`.
 
 ## 4. Prisma data contract
 
@@ -504,9 +504,9 @@ Tradeoff:
 - `prisma/migration_lock.toml` is not required as a manually changed file in scope.
 - No existing test files or test framework are present.
 
-## 10. File inventory for `docs/phase-2-spec.md`
+## 10. File inventory for `docs/phase-2/spec.md`
 The following file is proposed for creation:
-- `docs/phase-2-spec.md`
+- `docs/phase-2/spec.md`
 
 ## 11. Approval checklist
 - [ ] Approve Prisma schema contract as specified.
@@ -520,4 +520,4 @@ The following file is proposed for creation:
 - [ ] Approve test assignments by task: smoke in Task 1, provisioning in Task 3, scoping in Task 4, validation in Task 5.
 - [ ] Approve `/app/setup` redirect for users who already have membership.
 - [ ] Confirm acceptance criteria and task sequence.
-- [ ] Confirm `docs/phase-2-spec.md` as the canonical spec path.
+- [ ] Confirm `docs/phase-2/spec.md` as the canonical spec path.
