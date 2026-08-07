@@ -63,7 +63,7 @@ This task does not modify services, schemas, or authorization behavior. Data acc
 - `src/components/ui/error-state.tsx`
 - `src/app/dashboard/tickets/loading.tsx`
 - `src/app/dashboard/tickets/error.tsx`
-- `docs/phase-3-task-5.md`
+- `docs/phase-3/task-5.md`
 
 ## Files Modified
 

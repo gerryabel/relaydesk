@@ -10,7 +10,7 @@ Pipeline: Search → Filter → Sort → Result
 
 - `src/lib/tickets/sort.ts`
 - `src/components/tickets/ticket-sort-control.tsx`
-- `docs/phase-3-task-3.md`
+- `docs/phase-3/task-3.md`
 
 ## Files Modified
 

@@ -50,7 +50,7 @@ This task implements the authenticated application shell that every future featu
 - `src/app/dashboard/settings/page.tsx`
 - `src/components/dashboard/sidebar.tsx`
 - `src/lib/dashboard/server.ts`
-- `docs/phase-2-task-4.md`
+- `docs/phase-2/task-4.md`
 
 ## Files Modified
 

@@ -64,7 +64,7 @@ When a regression is found, the fix targets the source behavior rather than addi
 - `src/__tests__/tickets.sort.test.ts`
 - `src/__tests__/tickets.pagination.test.ts`
 - `src/__tests__/tickets.list-states.test.ts`
-- `docs/phase-3-task-7.md`
+- `docs/phase-3/task-7.md`
 
 ## Files Modified
 

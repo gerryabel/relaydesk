@@ -91,7 +91,7 @@ All commands must pass.
 
 Each completed task must include:
 
-docs/phase-x-task-y.md
+docs/phase-{phase}/task-{number}.md
 
 Including:
 

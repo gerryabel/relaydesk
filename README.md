@@ -108,7 +108,7 @@ GitHub Actions workflow runs `npm ci`, `npm run lint`, `npm run typecheck`, and 
 
 - Do not commit `.env`.
 - Auth uses Better Auth email/password only. No OAuth, 2FA, or magic links in Phase 1.
-- Phase 2 adds internal workspace provisioning, tickets, ticket messages, and API auth behavior aligned with `docs/phase-2-spec.md`.
+- Phase 2 adds internal workspace provisioning, tickets, ticket messages, and API auth behavior aligned with `docs/phase-2/spec.md`.
 - Redis is deferred until background jobs are introduced in a later phase.
 - Phase 3 focuses on ticket discovery and dashboard UX: search, filters, sorting, pagination, empty/loading/error states, accessibility, and responsive polish.
 - `src/app/api/tickets/search/route.ts` provides a dedicated search API surface; `/dashboard/tickets` supports URL-synchronized search, filters, sort, and pagination.

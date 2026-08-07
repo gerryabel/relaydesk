@@ -66,7 +66,7 @@ API route handlers support the same pagination parameters as the page. This pres
 ## Files Added
 
 - `src/lib/tickets/pagination.ts`
-- `docs/phase-3-task-4.md`
+- `docs/phase-3/task-4.md`
 
 ## Files Modified
 

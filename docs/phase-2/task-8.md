@@ -6,7 +6,7 @@ Task 8 closes Phase 2 by validating the security and authorization behavior of t
 
 ## Objectives
 
-- Verify public, private, and API auth behavior against `docs/phase-2-spec.md`.
+- Verify public, private, and API auth behavior against `docs/phase-2/spec.md`.
 - Remove any remaining debug code or outdated documentation.
 - Add regression coverage for auth behavior in ticket detail API routes.
 

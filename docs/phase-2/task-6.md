@@ -107,7 +107,7 @@ All checks passed.
 - src/app/dashboard/tickets/[id]/page.tsx
 - src/app/dashboard/tickets/[id]/edit/page.tsx
 - src/app/dashboard/tickets/[id]/not-found.tsx
-- docs/phase-2-task-6.md
+- docs/phase-2/task-6.md
 
 ## Files Modified
 

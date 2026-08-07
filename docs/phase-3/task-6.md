@@ -58,7 +58,7 @@ Accessibility work includes manual checks for keyboard flow, focus visibility, a
 
 ## Files Added
 
-- `docs/phase-3-task-6.md`
+- `docs/phase-3/task-6.md`
 
 ## Files Modified
 

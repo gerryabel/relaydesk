@@ -8,7 +8,7 @@ This task closes Phase 3 by updating repository documentation, removing any left
 
 - Update `README.md` and related docs to reflect completed Phase 3 capabilities.
 - Remove outdated notes, debug references, or inaccurate Phase 2-only descriptions.
-- Verify Phase 3 deliverables match the task breakdown in `docs/phase-3-spec.md`.
+- Verify Phase 3 deliverables match the task breakdown in `docs/phase-3/spec.md`.
 - Confirm the project still passes lint, typecheck, build, and tests after cleanup.
 - Leave the repository in a clean state ready for the next phase.
 
@@ -57,7 +57,7 @@ This task avoids feature work. Any required code changes are limited to small do
 
 ## Files Added
 
-- `docs/phase-3-task-8.md`
+- `docs/phase-3/task-8.md`
 
 ## Files Modified
 

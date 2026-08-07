@@ -66,7 +66,7 @@ A dedicated API route handler is introduced for ticket search so the UI can evol
 
 - `src/lib/tickets/search.ts`
 - `src/app/api/tickets/search/route.ts`
-- `docs/phase-3-task-1.md`
+- `docs/phase-3/task-1.md`
 
 ## Files Modified
 
