@@ -20,6 +20,7 @@ model User {
   sessions        Session[]
   memberships     Membership[]
   createdTickets  Ticket[]     @relation("TicketCreator")
+  assignedTickets Ticket[]     @relation("TicketAssignee")
   createdMessages Message[]    @relation("MessageCreator")
 }
 
@@ -118,6 +119,7 @@ model Ticket {
   id          String         @id @default(cuid())
   workspaceId String
   createdById String?
+  assignedToId String?
   title       String
   description String?
   status      TicketStatus   @default(open)
@@ -127,10 +129,12 @@ model Ticket {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdBy User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo User?    @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   messages  Message[]
 
   @@index([workspaceId])
   @@index([createdById])
+  @@index([assignedToId])
 }
 
 model Message {

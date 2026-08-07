@@ -50,6 +50,29 @@ export async function getCurrentWorkspace(): Promise<MembershipInfo['workspace']
   return membership.workspace;
 }
 
+export async function getWorkspaceMembers(): Promise<Array<{ id: string; name: string; email: string }>> {
+  const membership = await getCurrentMembership();
+  const members = await prisma.user.findMany({
+    where: {
+      memberships: {
+        some: {
+          workspaceId: membership.workspaceId,
+        },
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+    orderBy: {
+      name: 'asc',
+    },
+  });
+
+  return members;
+}
+
 export async function ensureDefaultWorkspace(userId: string): Promise<MembershipWithWorkspace> {
   const existing = await loadMembership(userId);
 

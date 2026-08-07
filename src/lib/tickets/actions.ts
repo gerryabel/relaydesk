@@ -2,9 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { getCurrentMembership, ForbiddenError } from '@/lib/workspace/server';
-import { createTicket, getTicketById, updateTicket, closeTicket, TicketNotFoundError } from '@/lib/tickets/server';
-import { createTicketSchema, updateTicketSchema } from '@/lib/tickets/schema';
-import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema';
+import { createTicket, getTicketById, updateTicket, closeTicket, assignTicket, unassignTicket, TicketNotFoundError, AssigneeNotInWorkspaceError } from '@/lib/tickets/server';
+import { createTicketSchema, updateTicketSchema, assignTicketSchema } from '@/lib/tickets/schema';
+import type { CreateTicketInput, UpdateTicketInput, AssignTicketInput } from '@/lib/tickets/schema';
 
 export async function createTicketAction(input: CreateTicketInput) {
   try {
@@ -83,6 +83,61 @@ export async function closeTicketAction(id: string) {
       return { error: 'Ticket not found' };
     }
     return { error: 'Failed to close ticket' };
+  }
+}
+
+export async function assignTicketAction(id: string, input: AssignTicketInput) {
+  try {
+    await getCurrentMembership();
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      return { error: 'No workspace membership found' };
+    }
+    return { error: 'Failed to assign ticket' };
+  }
+
+  const parsed = assignTicketSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? 'Invalid ticket assignment' };
+  }
+
+  try {
+    const ticket = await assignTicket(id, parsed.data);
+    revalidatePath('/dashboard/tickets');
+    revalidatePath(`/dashboard/tickets/${id}`);
+    return { success: ticket };
+  } catch (error) {
+    if (error instanceof TicketNotFoundError) {
+      return { error: 'Ticket not found' };
+    }
+    if (error instanceof AssigneeNotInWorkspaceError) {
+      return { error: 'Assignee is not in this workspace' };
+    }
+    return { error: 'Failed to assign ticket' };
+  }
+}
+
+export async function unassignTicketAction(id: string) {
+  try {
+    await getCurrentMembership();
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      return { error: 'No workspace membership found' };
+    }
+    return { error: 'Failed to unassign ticket' };
+  }
+
+  try {
+    const ticket = await unassignTicket(id);
+    revalidatePath('/dashboard/tickets');
+    revalidatePath(`/dashboard/tickets/${id}`);
+    return { success: ticket };
+  } catch (error) {
+    if (error instanceof TicketNotFoundError) {
+      return { error: 'Ticket not found' };
+    }
+    return { error: 'Failed to unassign ticket' };
   }
 }
 

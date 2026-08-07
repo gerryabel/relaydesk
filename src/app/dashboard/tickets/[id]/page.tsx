@@ -3,7 +3,9 @@ import { getTicketById, TicketNotFoundError } from '@/lib/tickets/server';
 import { getMessages } from '@/lib/messages/server';
 import type { MessageWithCreator } from '@/lib/messages/server';
 import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
+import { getWorkspaceMembers } from '@/lib/workspace/server';
 import CreateMessageForm from '@/components/tickets/create-message-form';
+import AssignTicketForm from '@/components/tickets/assign-ticket-form';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -77,6 +79,13 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
 
+  let members: Array<{ id: string; name: string; email: string }> = [];
+  try {
+    members = await getWorkspaceMembers();
+  } catch (error) {
+    console.error('Failed to load workspace members', error);
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
       <div className="flex flex-col gap-6">
@@ -119,6 +128,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">
             {ticket.description ?? 'No description provided.'}
           </p>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Assignment</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Assign tiket ini kepada member workspace.
+            </p>
+          </header>
+          <AssignTicketForm ticket={ticket} members={members} />
         </section>
 
         <section className="flex flex-col gap-4">

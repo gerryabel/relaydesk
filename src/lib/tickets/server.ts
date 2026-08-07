@@ -1,8 +1,8 @@
 import { prisma } from '@/lib/db/prisma';
 import { getCurrentMembership } from '@/lib/workspace/server';
 import { z } from 'zod';
-import { createTicketSchema, updateTicketSchema, ticketStatusSchema, ticketPrioritySchema } from '@/lib/tickets/schema';
-import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema';
+import { createTicketSchema, updateTicketSchema, ticketStatusSchema, ticketPrioritySchema, assignTicketSchema } from '@/lib/tickets/schema';
+import type { CreateTicketInput, UpdateTicketInput, AssignTicketInput } from '@/lib/tickets/schema';
 import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/tickets/pagination';
 import type { Prisma } from '@/generated/prisma';
@@ -11,6 +11,13 @@ export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
     super(message);
     this.name = 'TicketNotFoundError';
+  }
+}
+
+export class AssigneeNotInWorkspaceError extends Error {
+  constructor(message = 'Assignee bukan member workspace ini.') {
+    super(message);
+    this.name = 'AssigneeNotInWorkspaceError';
   }
 }
 
@@ -25,6 +32,15 @@ export type TicketWithCreator = {
   createdAt: Date;
   updatedAt: Date;
   createdBy: {
+    id: string;
+    email: string;
+    emailVerified: boolean;
+    name: string;
+    image: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  } | null;
+  assignedTo?: {
     id: string;
     email: string;
     emailVerified: boolean;
@@ -160,6 +176,7 @@ export async function getTicketById(id: string): Promise<TicketWithCreator> {
     },
     include: {
       createdBy: true,
+      assignedTo: true,
     },
   });
 
@@ -225,6 +242,83 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
     },
     include: {
       createdBy: true,
+    },
+  }) as Promise<TicketWithCreator>;
+}
+
+export async function assignTicket(id: string, input: AssignTicketInput): Promise<TicketWithCreator> {
+  const membership = await getCurrentMembership();
+  const parsed = assignTicketSchema.parse(input);
+
+  const existing = await prisma.ticket.findFirst({
+    where: {
+      id,
+      workspaceId: membership.workspaceId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!existing) {
+    throw new TicketNotFoundError();
+  }
+
+  const assigneeMembership = await prisma.membership.findFirst({
+    where: {
+      userId: parsed.assigneeId,
+      workspaceId: membership.workspaceId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!assigneeMembership) {
+    throw new AssigneeNotInWorkspaceError();
+  }
+
+  return prisma.ticket.update({
+    where: {
+      id,
+    },
+    data: {
+      assignedToId: parsed.assigneeId,
+    },
+    include: {
+      createdBy: true,
+      assignedTo: true,
+    },
+  }) as Promise<TicketWithCreator>;
+}
+
+export async function unassignTicket(id: string): Promise<TicketWithCreator> {
+  const membership = await getCurrentMembership();
+
+  const existing = await prisma.ticket.findFirst({
+    where: {
+      id,
+      workspaceId: membership.workspaceId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!existing) {
+    throw new TicketNotFoundError();
+  }
+
+  return prisma.ticket.update({
+    where: {
+      id,
+    },
+    data: {
+      assignedToId: null,
+    },
+    include: {
+      createdBy: true,
+      assignedTo: true,
     },
   }) as Promise<TicketWithCreator>;
 }
