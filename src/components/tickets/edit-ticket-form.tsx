@@ -3,12 +3,23 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { updateTicketAction, closeTicketAction } from '@/lib/tickets/actions';
-import { type TicketWithCreator } from '@/lib/tickets/server';
+import { getAllowedTransitions, type TicketStatus } from '@/lib/tickets/workflow';
+import type { TicketWithCreator } from '@/lib/tickets/server';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select } from '@/components/ui/select';
+
+const STATUS_OPTIONS: TicketStatus[] = ['open', 'in_progress', 'waiting_customer', 'resolved', 'closed'];
+
+const STATUS_LABEL: Record<TicketStatus, string> = {
+  open: 'Open',
+  in_progress: 'In Progress',
+  waiting_customer: 'Waiting Customer',
+  resolved: 'Resolved',
+  closed: 'Closed',
+};
 
 type EditTicketFormProps = {
   ticket: TicketWithCreator;
@@ -18,6 +29,7 @@ export default function EditTicketForm({ ticket }: EditTicketFormProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
+  const allowedStatuses = getAllowedTransitions(ticket.status);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -28,13 +40,15 @@ export default function EditTicketForm({ ticket }: EditTicketFormProps) {
 
     const title = (formData.get('title') as string)?.trim() ?? '';
     const description = (formData.get('description') as string)?.trim() || undefined;
-    const priority = (formData.get('priority') as string) || undefined;
-    const status = (formData.get('status') as string) || undefined;
+    const priority = (formData.get('priority') as 'low' | 'medium' | 'high' | 'urgent' | null) || undefined;
+    const status = (formData.get('status') as TicketStatus) || undefined;
 
-    const result = await updateTicketAction(
-      ticket.id,
-      { title, description, priority, status } as import('@/lib/tickets/schema').UpdateTicketInput
-    );
+    const result = await updateTicketAction(ticket.id, {
+      title,
+      description,
+      priority,
+      status,
+    });
 
     setIsPending(false);
 
@@ -87,10 +101,14 @@ export default function EditTicketForm({ ticket }: EditTicketFormProps) {
         <div className="flex flex-col gap-2">
           <Label htmlFor="status">Status</Label>
           <Select id="status" name="status" defaultValue={ticket.status}>
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="resolved">Resolved</option>
-            <option value="closed">Closed</option>
+            <option value="" disabled>
+              Select transition
+            </option>
+            {STATUS_OPTIONS.filter((status) => allowedStatuses.includes(status) || status === ticket.status).map((status) => (
+              <option key={status} value={status}>
+                {STATUS_LABEL[status]}
+              </option>
+            ))}
           </Select>
         </div>
       </div>

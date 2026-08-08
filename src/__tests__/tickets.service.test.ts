@@ -141,7 +141,7 @@ describe('ticket services', () => {
   it('updateTicket updates within the current workspace', async () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
-      .mockResolvedValue({ id: 'ticket-1' } as never);
+      .mockResolvedValue({ id: 'ticket-1', status: 'open' } as never);
 
     const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue(fakeTicket as never);
 
@@ -154,7 +154,7 @@ describe('ticket services', () => {
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true },
+        select: { id: true, status: true },
       });
       expect(updateSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1' },
@@ -171,7 +171,7 @@ describe('ticket services', () => {
   it('closeTicket closes a ticket', async () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
-      .mockResolvedValue({ id: 'ticket-1' } as never);
+      .mockResolvedValue({ id: 'ticket-1', status: 'resolved' } as never);
 
     const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue({
       ...fakeTicket,
@@ -183,7 +183,7 @@ describe('ticket services', () => {
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true },
+        select: { id: true, status: true },
       });
       expect(updateSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1' },

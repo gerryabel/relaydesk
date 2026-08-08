@@ -17,6 +17,7 @@ const priorityTone: Record<TicketWithCreator['priority'], 'neutral' | 'blue' | '
 const statusTone: Record<TicketWithCreator['status'], 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
   open: 'blue',
   in_progress: 'amber',
+  waiting_customer: 'amber',
   resolved: 'emerald',
   closed: 'neutral',
 };
@@ -24,6 +25,7 @@ const statusTone: Record<TicketWithCreator['status'], 'neutral' | 'blue' | 'ambe
 const statusLabel: Record<TicketWithCreator['status'], string> = {
   open: 'Open',
   in_progress: 'In Progress',
+  waiting_customer: 'Waiting Customer',
   resolved: 'Resolved',
   closed: 'Closed',
 };

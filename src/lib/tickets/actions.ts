@@ -5,6 +5,7 @@ import { getCurrentMembership, ForbiddenError } from '@/lib/workspace/server';
 import { createTicket, getTicketById, updateTicket, closeTicket, TicketNotFoundError } from '@/lib/tickets/server';
 import { createTicketSchema, updateTicketSchema } from '@/lib/tickets/schema';
 import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema';
+import { InvalidTicketTransitionError } from '@/lib/tickets/workflow';
 
 export async function createTicketAction(input: CreateTicketInput) {
   try {
@@ -59,6 +60,9 @@ export async function updateTicketAction(id: string, input: UpdateTicketInput) {
     if (error instanceof TicketNotFoundError) {
       return { error: 'Ticket not found' };
     }
+    if (error instanceof InvalidTicketTransitionError) {
+      return { error: error.message ?? 'Invalid ticket transition' };
+    }
     return { error: 'Failed to update ticket' };
   }
 }
@@ -81,6 +85,9 @@ export async function closeTicketAction(id: string) {
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
       return { error: 'Ticket not found' };
+    }
+    if (error instanceof InvalidTicketTransitionError) {
+      return { error: error.message ?? 'Invalid ticket transition' };
     }
     return { error: 'Failed to close ticket' };
   }
