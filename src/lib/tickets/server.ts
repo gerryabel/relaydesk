@@ -6,6 +6,7 @@ import type { CreateTicketInput, UpdateTicketInput } from '@/lib/tickets/schema'
 import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/tickets/pagination';
 import { assertTransitionAllowed } from '@/lib/tickets/workflow';
+import { calculateResponseDeadline, calculateResolutionDeadline } from '@/lib/tickets/sla';
 import type { Prisma } from '@/generated/prisma';
 
 export class TicketNotFoundError extends Error {
@@ -25,6 +26,10 @@ export type TicketWithCreator = {
   priority: z.infer<typeof ticketPrioritySchema>;
   createdAt: Date;
   updatedAt: Date;
+  responseSlaDeadline: Date | null;
+  resolutionSlaDeadline: Date | null;
+  firstResponseAt: Date | null;
+  resolvedAt: Date | null;
   createdBy: {
     id: string;
     email: string;
@@ -39,6 +44,10 @@ export type TicketWithCreator = {
 export async function createTicket(input: CreateTicketInput): Promise<TicketWithCreator> {
   const parsed = createTicketSchema.parse(input);
   const membership = await getCurrentMembership();
+  const now = new Date();
+
+  const responseSlaDeadline = calculateResponseDeadline(now, parsed.priority);
+  const resolutionSlaDeadline = calculateResolutionDeadline(now, parsed.priority);
 
   return prisma.ticket.create({
     data: {
@@ -47,6 +56,8 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
       description: parsed.description,
       priority: parsed.priority,
       createdById: membership.userId,
+      responseSlaDeadline,
+      resolutionSlaDeadline,
     },
     include: {
       createdBy: true,
@@ -173,6 +184,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     select: {
       id: true,
       status: true,
+      resolvedAt: true,
     },
   });
 
@@ -185,6 +197,10 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
   }
 
   const data: Prisma.TicketUpdateInput = { ...parsed };
+
+  if (parsed.status === 'resolved' && !existing.resolvedAt) {
+    data.resolvedAt = new Date();
+  }
 
   return prisma.ticket
     .update({

@@ -8,6 +8,7 @@ import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { getResponseSlaStatus, getResolutionSlaStatus } from '@/lib/tickets/sla';
 
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -28,6 +29,26 @@ const statusLabel: Record<string, string> = {
   resolved: 'Resolved',
   closed: 'Closed',
 };
+
+const slaStatusLabel: Record<string, string> = {
+  pending: 'Pending',
+  completed: 'Completed',
+  overdue: 'Overdue',
+};
+
+const slaStatusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
+  pending: 'blue',
+  completed: 'emerald',
+  overdue: 'red',
+};
+
+function formatDeadline(deadline: Date | null) {
+  if (!deadline) {
+    return 'Not set';
+  }
+
+  return new Date(deadline).toLocaleString('id-ID');
+}
 
 function MessageItem({ message }: { message: MessageWithCreator }) {
   const author = message.createdBy?.name ?? 'Unknown';
@@ -76,6 +97,9 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
+  const now = new Date();
+  const responseStatus = getResponseSlaStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, now);
+  const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -119,6 +143,40 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">
             {ticket.description ?? 'No description provided.'}
           </p>
+        </section>
+
+        <section className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">SLA</h2>
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Response SLA</p>
+              <div className="mt-1 flex flex-col gap-1">
+                <div>
+                  <Badge tone={slaStatusTone[responseStatus]}>{slaStatusLabel[responseStatus]}</Badge>
+                </div>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Deadline: {formatDeadline(ticket.responseSlaDeadline)}
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  First response: {ticket.firstResponseAt ? new Date(ticket.firstResponseAt).toLocaleString('id-ID') : 'Not yet'}
+                </p>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Resolution SLA</p>
+              <div className="mt-1 flex flex-col gap-1">
+                <div>
+                  <Badge tone={slaStatusTone[resolutionStatus]}>{slaStatusLabel[resolutionStatus]}</Badge>
+                </div>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Deadline: {formatDeadline(ticket.resolutionSlaDeadline)}
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Resolved at: {ticket.resolvedAt ? new Date(ticket.resolvedAt).toLocaleString('id-ID') : 'Not yet'}
+                </p>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="flex flex-col gap-3">

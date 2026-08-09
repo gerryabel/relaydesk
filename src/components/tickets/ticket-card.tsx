@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { type TicketWithCreator } from '@/lib/tickets/server';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
+import { getResponseSlaStatus, getResolutionSlaStatus } from '@/lib/tickets/sla';
 
 type TicketCardProps = {
   ticket: TicketWithCreator;
@@ -30,9 +31,24 @@ const statusLabel: Record<TicketWithCreator['status'], string> = {
   closed: 'Closed',
 };
 
+const slaStatusLabel: Record<string, string> = {
+  pending: 'Pending',
+  completed: 'Completed',
+  overdue: 'Overdue',
+};
+
+const slaStatusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
+  pending: 'blue',
+  completed: 'emerald',
+  overdue: 'red',
+};
+
 export default function TicketCard({ ticket }: TicketCardProps) {
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdDate = new Date(ticket.createdAt).toLocaleDateString('id-ID');
+  const now = new Date();
+  const responseStatus = getResponseSlaStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, now);
+  const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
 
   return (
     <Link href={`/dashboard/tickets/${ticket.id}`} className="block">
@@ -51,6 +67,16 @@ export default function TicketCard({ ticket }: TicketCardProps) {
               <Badge tone={statusTone[ticket.status]}>{statusLabel[ticket.status]}</Badge>
               <Badge tone={priorityTone[ticket.priority]}>{ticket.priority}</Badge>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
+            <span>
+              Response SLA: <Badge tone={slaStatusTone[responseStatus]}>{slaStatusLabel[responseStatus]}</Badge>
+            </span>
+            <span aria-hidden="true">•</span>
+            <span>
+              Resolution SLA: <Badge tone={slaStatusTone[resolutionStatus]}>{slaStatusLabel[resolutionStatus]}</Badge>
+            </span>
           </div>
         </div>
       </Card>

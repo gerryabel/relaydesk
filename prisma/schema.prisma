@@ -116,15 +116,19 @@ model Membership {
 }
 
 model Ticket {
-  id          String         @id @default(cuid())
-  workspaceId String
-  createdById String?
-  title       String
-  description String?
-  status      TicketStatus   @default(open)
-  priority    TicketPriority @default(medium)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  workspaceId         String
+  createdById         String?
+  title               String
+  description         String?
+  status              TicketStatus   @default(open)
+  priority            TicketPriority @default(medium)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  responseSlaDeadline DateTime?
+  resolutionSlaDeadline DateTime?
+  firstResponseAt     DateTime?
+  resolvedAt          DateTime?
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdBy User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
