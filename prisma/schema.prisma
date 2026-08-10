@@ -79,6 +79,7 @@ enum WorkspaceRole {
 enum TicketStatus {
   open
   in_progress
+  waiting_customer
   resolved
   closed
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { notFound } from 'next/navigation';
-import { prisma } from '@/lib/db/prisma';
-import { getTicketById, TicketNotFoundError } from '@/lib/tickets/server';
+import { getTicketById, TicketNotFoundError, updateTicket } from '@/lib/tickets/server';
+import { InvalidTicketTransitionError } from '@/lib/tickets/workflow';
 import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -38,7 +38,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (priority !== undefined && !['low', 'medium', 'high', 'urgent'].includes(priority)) {
       return NextResponse.json({ error: 'Invalid priority' }, { status: 400 });
     }
-    if (status !== undefined && !['open', 'in_progress', 'resolved', 'closed'].includes(status)) {
+    if (status !== undefined && !['open', 'in_progress', 'waiting_customer', 'resolved', 'closed'].includes(status)) {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
     }
 
@@ -55,18 +55,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Description is too long' }, { status: 400 });
     }
 
-    const ticket = await getTicketById(resolved.id);
-    const updatePayload: Record<string, unknown> = {};
-    if (trimmedTitle !== undefined) updatePayload.title = trimmedTitle;
-    if (description !== undefined) updatePayload.description = description.trim() || null;
-    if (priority !== undefined) updatePayload.priority = priority;
-    if (status !== undefined) updatePayload.status = status;
-
-    const updated = await prisma.ticket.update({
-      where: { id: ticket.id },
-      data: updatePayload,
-      include: { createdBy: true },
-    });
+    const updated = await updateTicket(resolved.id, {
+      ...(trimmedTitle !== undefined ? { title: trimmedTitle } : {}),
+      description: description !== undefined ? description.trim() || null : undefined,
+      ...(priority !== undefined ? { priority } : {}),
+      ...(status !== undefined ? { status } : {}),
+    } as import('@/lib/tickets/schema').UpdateTicketInput);
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -78,6 +72,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     if (error instanceof ForbiddenError) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (error instanceof InvalidTicketTransitionError) {
+      return NextResponse.json({ error: error.message ?? 'Invalid ticket transition' }, { status: 409 });
     }
     return NextResponse.json({ error: 'Failed to update ticket' }, { status: 500 });
   }

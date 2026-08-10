@@ -4,8 +4,9 @@ import { getMessages } from '@/lib/messages/server';
 import type { MessageWithCreator } from '@/lib/messages/server';
 import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
 import { getWorkspaceMembers } from '@/lib/workspace/server';
-import CreateMessageForm from '@/components/tickets/create-message-form';
 import AssignTicketForm from '@/components/tickets/assign-ticket-form';
+import CreateMessageForm from '@/components/tickets/create-message-form';
+import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -17,6 +18,7 @@ type TicketDetailPageProps = {
 const statusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
   open: 'blue',
   in_progress: 'amber',
+  waiting_customer: 'amber',
   resolved: 'emerald',
   closed: 'neutral',
 };
@@ -24,6 +26,7 @@ const statusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red
 const statusLabel: Record<string, string> = {
   open: 'Open',
   in_progress: 'In Progress',
+  waiting_customer: 'Waiting Customer',
   resolved: 'Resolved',
   closed: 'Closed',
 };
@@ -51,30 +54,27 @@ export async function generateMetadata({ params }: TicketDetailPageProps) {
 }
 
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
-  const { id } = await params;
+  const resolved = await params;
   let ticket;
+  let messages: MessageWithCreator[] = [];
 
   try {
-    ticket = await getTicketById(id);
+    ticket = await getTicketById(resolved.id);
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
-      notFound();
+      throw notFound();
     }
-
     throw error;
   }
 
-  let messages: MessageWithCreator[] = [];
   try {
-    messages = await getMessages(id);
+    messages = await getMessages(resolved.id);
   } catch (error) {
     if (error instanceof MessagesTicketNotFoundError) {
-      notFound();
+      throw notFound();
     }
-
     throw error;
   }
-
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
@@ -138,6 +138,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             </p>
           </header>
           <AssignTicketForm ticket={ticket} members={members} />
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Workflow</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Update ticket status using allowed transitions.
+            </p>
+          </header>
+          <TicketTransitionForm ticket={ticket} />
         </section>
 
         <section className="flex flex-col gap-4">

@@ -5,6 +5,7 @@ import { createTicketSchema, updateTicketSchema, ticketStatusSchema, ticketPrior
 import type { CreateTicketInput, UpdateTicketInput, AssignTicketInput } from '@/lib/tickets/schema';
 import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/tickets/pagination';
+import { assertTransitionAllowed } from '@/lib/tickets/workflow';
 import type { Prisma } from '@/generated/prisma';
 
 export class TicketNotFoundError extends Error {
@@ -88,7 +89,7 @@ function buildTicketWhere(options: {
   priority?: PriorityFilter;
   query?: string;
   useOrSearch?: boolean;
-}): WhereInput {
+}): Prisma.TicketWhereInput {
   const { membership, status, priority, query, useOrSearch } = options;
 
   return {
@@ -106,16 +107,6 @@ function buildTicketWhere(options: {
         : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
       : {}),
   };
-}
-
-type WhereInput = Pick<Prisma.TicketWhereInput, 'AND' | 'OR' | 'NOT'> & {
-  workspaceId: Prisma.TicketWhereInput['workspaceId'];
-  status?: Prisma.TicketWhereInput['status'];
-  priority?: Prisma.TicketWhereInput['priority'];
-};
-
-function asTicketWhere(where: WhereInput): Prisma.TicketWhereInput {
-  return where as Prisma.TicketWhereInput;
 }
 
 export async function getTickets(options: TicketGetOptions = {}): Promise<TicketPaginationResult<TicketWithCreator>> {
@@ -140,14 +131,14 @@ export async function getTickets(options: TicketGetOptions = {}): Promise<Ticket
     useOrSearch,
   });
 
-  const total = await prisma.ticket.count({ where: asTicketWhere(where) });
+  const total = await prisma.ticket.count({ where });
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const normalizedPage = Math.min(page, totalPages);
   const skip = (normalizedPage - 1) * limit;
 
   const tickets = await prisma.ticket
     .findMany({
-      where: asTicketWhere(where),
+      where,
       include: { createdBy: true },
       orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
       skip,
@@ -198,6 +189,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     },
     select: {
       id: true,
+      status: true,
     },
   });
 
@@ -205,15 +197,19 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     throw new TicketNotFoundError();
   }
 
-  return prisma.ticket.update({
-    where: {
-      id,
-    },
-    data: parsed,
-    include: {
-      createdBy: true,
-    },
-  }) as Promise<TicketWithCreator>;
+  if (parsed.status && parsed.status !== existing.status) {
+    assertTransitionAllowed(existing.status, parsed.status);
+  }
+
+  const data: Prisma.TicketUpdateInput = { ...parsed };
+
+  return prisma.ticket
+    .update({
+      where: { id },
+      data,
+      include: { createdBy: true },
+    })
+    .then((item) => item as TicketWithCreator);
 }
 
 export async function closeTicket(id: string): Promise<TicketWithCreator> {
@@ -226,6 +222,7 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
     },
     select: {
       id: true,
+      status: true,
     },
   });
 
@@ -233,17 +230,19 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
     throw new TicketNotFoundError();
   }
 
-  return prisma.ticket.update({
-    where: {
-      id,
-    },
-    data: {
-      status: 'closed',
-    },
-    include: {
-      createdBy: true,
-    },
-  }) as Promise<TicketWithCreator>;
+  assertTransitionAllowed(existing.status, 'closed');
+
+  return prisma.ticket
+    .update({
+      where: { id },
+      data: {
+        status: 'closed',
+      },
+      include: {
+        createdBy: true,
+      },
+    })
+    .then((item) => item as TicketWithCreator);
 }
 
 export async function assignTicket(id: string, input: AssignTicketInput): Promise<TicketWithCreator> {
