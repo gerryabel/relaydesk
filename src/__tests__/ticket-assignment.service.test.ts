@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prisma as sharedPrisma } from '@/lib/db/prisma';
 import {
+  createTicket,
+  getTickets,
+  getTicketById,
+  updateTicket,
+  closeTicket,
   assignTicket,
   unassignTicket,
   TicketNotFoundError,
@@ -176,6 +181,70 @@ describe('ticket assignment services', () => {
       await expect(unassignTicket('missing')).rejects.toThrow(TicketNotFoundError);
     } finally {
       findFirstSpy.mockRestore();
+    }
+  });
+
+  it('preserves existing create/update/close/getTicketById behavior', async () => {
+    const createSpy = vi.spyOn(sharedPrisma.ticket, 'create').mockResolvedValue(fakeTicket as never);
+    const findFirstSpy = vi
+      .spyOn(sharedPrisma.ticket, 'findFirst')
+      .mockResolvedValueOnce({ id: 'ticket-1', status: 'open' } as never)
+      .mockResolvedValueOnce({ id: 'ticket-1', status: 'in_progress' } as never)
+      .mockResolvedValueOnce({ id: 'ticket-1', status: 'resolved' } as never)
+      .mockResolvedValueOnce({ ...fakeTicket, status: 'resolved' } as never);
+    const updateSpy = vi
+      .spyOn(sharedPrisma.ticket, 'update')
+      .mockResolvedValueOnce({ ...fakeTicket, status: 'in_progress' } as never)
+      .mockResolvedValueOnce({ ...fakeTicket, status: 'resolved' } as never)
+      .mockResolvedValueOnce({ ...fakeTicket, status: 'closed' } as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+
+    try {
+      const created = await createTicket({ title: 'Judul Tiket', description: 'Deskripsi', priority: 'medium' });
+      expect(created.id).toBe('ticket-1');
+
+      const updated = await updateTicket('ticket-1', { status: 'in_progress', description: null });
+      expect(updated.status).toBe('in_progress');
+
+      const resolved = await updateTicket('ticket-1', { status: 'resolved', description: null });
+      expect(resolved.status).toBe('resolved');
+
+      const closed = await closeTicket('ticket-1');
+      expect(closed.status).toBe('closed');
+
+      const detail = await getTicketById('ticket-1');
+      expect(detail.id).toBe('ticket-1');
+
+      const tickets = await getTickets({});
+      expect(tickets.data).toHaveLength(1);
+
+      expect(createSpy).toHaveBeenCalledWith({
+        data: {
+          workspaceId: 'workspace-123',
+          title: 'Judul Tiket',
+          description: 'Deskripsi',
+          priority: 'medium',
+          createdById: 'user-123',
+          responseSlaDeadline: expect.any(Date),
+          resolutionSlaDeadline: expect.any(Date),
+        },
+        include: { createdBy: true },
+      });
+      expect(updateSpy).toHaveBeenNthCalledWith(1, {
+        where: { id: 'ticket-1' },
+        data: { status: 'in_progress', description: null },
+        include: { createdBy: true },
+      });
+      expect(closeTicket).toBeDefined();
+      expect(getTicketById).toBeDefined();
+      expect(getTickets).toBeDefined();
+    } finally {
+      createSpy.mockRestore();
+      findFirstSpy.mockRestore();
+      updateSpy.mockRestore();
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
     }
   });
 });
