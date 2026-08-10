@@ -131,7 +131,7 @@ describe('ticket services', () => {
       await expect(getTicketById('missing')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'missing', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -206,7 +206,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -561,7 +561,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();

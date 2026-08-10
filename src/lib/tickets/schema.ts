@@ -56,4 +56,12 @@ export const ticketPriorityFilterSchema = z.object({
   priority: ticketPrioritySchema.optional(),
 });
 
+export const assignTicketSchema = z.object({
+  assigneeId: z.string().trim().min(1, 'Assignee wajib diisi'),
+});
+
+export const unassignTicketSchema = z.object({});
+
+export type AssignTicketInput = z.infer<typeof assignTicketSchema>;
+export type UnassignTicketInput = z.infer<typeof unassignTicketSchema>;
 export type TicketFiltersInput = z.infer<typeof ticketFiltersSchema>;
