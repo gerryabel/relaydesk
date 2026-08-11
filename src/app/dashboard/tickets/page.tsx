@@ -5,6 +5,7 @@ import TicketFilterControls from '@/components/tickets/ticket-filters';
 import TicketSortControls from '@/components/tickets/ticket-sort-control';
 import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema, ticketAssigneeFilterSchema } from '@/lib/tickets/schema';
 import type { TicketFiltersInput } from '@/lib/tickets/schema';
+import { normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import Link from 'next/link';
 import { getWorkspaceMembers } from '@/lib/workspace/server';
 
@@ -23,6 +24,30 @@ export function parseFilters(resolved: Record<string, unknown>): TicketFiltersIn
   };
 }
 
+export function parseSort(resolved: Record<string, unknown>): TicketSortInput | undefined {
+  const raw = (resolved.sort as string | undefined) ?? '';
+
+  if (!raw) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const [field, direction] = trimmed.split(':');
+  const normalizedField = (field ?? '').trim();
+  const normalizedDirection = (direction ?? '').trim();
+
+  if (!normalizedField || !normalizedDirection) {
+    return normalizeTicketSort(normalizedField || trimmed);
+  }
+
+  return normalizeTicketSort({ field: normalizedField, direction: normalizedDirection });
+}
+
 function parsePage(resolved: Record<string, unknown>) {
   const raw = Number((resolved.page ?? resolved.p ?? '1') as unknown as number);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1;
@@ -34,7 +59,7 @@ function parseLimit(resolved: Record<string, unknown>) {
   return Math.min(safe, 100);
 }
 
-function buildQueryString(
+export function buildQueryString(
   searchParams: URLSearchParams,
   nextSearch: string,
   nextStatus: string,
@@ -70,25 +95,26 @@ function buildQueryString(
   return params.toString();
 }
 
-function buildResolvedSearchParams(resolved: Record<string, unknown>) {
+export function buildResolvedSearchParams(resolved: Record<string, unknown>) {
   const search = (resolved.q ?? resolved.search) as string | undefined;
   const status = (resolved.status as string | undefined) ?? '';
   const priority = (resolved.priority as string | undefined) ?? '';
   const assignee = (resolved.assignee as string | undefined) ?? '';
+  const sort = (resolved.sort as string | undefined) ?? '';
 
   return new URLSearchParams({
     ...(search ? { search } : {}),
     ...(status ? { status } : {}),
     ...(priority ? { priority } : {}),
     ...(assignee ? { assignee } : {}),
+    ...(sort ? { sort } : {}),
   });
 }
 
-function buildPaginationQuery(resolved: Record<string, unknown>, page: number, limit: number) {
+export function buildPaginationQuery(resolved: Record<string, unknown>, page: number, limit: number) {
+  const entries = Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined);
   const params = new URLSearchParams({
-    ...Object.fromEntries(
-      Object.entries(resolved).filter(([, value]) => value !== '' && value !== undefined)
-    ),
+    ...Object.fromEntries(entries),
     page: String(page),
     limit: String(limit),
   });
@@ -104,6 +130,7 @@ type FilteredTicketsPagePropsResolved = {
 export default async function FilteredTicketsPage({ searchParams }: FilteredTicketsPagePropsResolved) {
   const resolved = searchParams ? await searchParams : {};
   const filters = parseFilters(resolved);
+  const sort = parseSort(resolved);
   const page = parsePage(resolved);
   const limit = parseLimit(resolved);
   const resolvedSearchParams = buildResolvedSearchParams(resolved);
@@ -114,6 +141,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
     priority: filters.priority,
     assignee: filters.assignee,
     search: filters.search ? { q: filters.search } : undefined,
+    sort,
     page,
     limit,
   });
