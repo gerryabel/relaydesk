@@ -83,11 +83,13 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
 
 type StatusFilter = z.infer<typeof ticketStatusSchema> | undefined;
 type PriorityFilter = z.infer<typeof ticketPrioritySchema> | undefined;
+type AssigneeFilter = string | undefined;
 type SearchFilter = string | undefined;
 
 type TicketGetOptions = {
   status?: StatusFilter;
   priority?: PriorityFilter;
+  assignee?: AssigneeFilter;
   search?: SearchFilter | { q?: string };
   sort?: TicketSortInput | unknown;
   page?: number;
@@ -98,15 +100,17 @@ function buildTicketWhere(options: {
   membership: { workspaceId: string };
   status?: StatusFilter;
   priority?: PriorityFilter;
+  assignee?: AssigneeFilter;
   query?: string;
   useOrSearch?: boolean;
 }): Prisma.TicketWhereInput {
-  const { membership, status, priority, query, useOrSearch } = options;
+  const { membership, status, priority, assignee, query, useOrSearch } = options;
 
   return {
     workspaceId: membership.workspaceId,
     ...(status ? { status } : {}),
     ...(priority ? { priority } : {}),
+    ...(assignee ? { assignedToId: assignee } : {}),
     ...(query
       ? useOrSearch
         ? {
@@ -140,6 +144,7 @@ export async function getTickets(options: TicketGetOptions = {}): Promise<Ticket
     membership,
     status: options.status,
     priority: options.priority,
+    assignee: options.assignee,
     query,
     useOrSearch,
   });

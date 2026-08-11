@@ -4,7 +4,7 @@ import { ForbiddenError, UnauthorizedError } from '@/lib/workspace/server';
 import { getTickets } from '@/lib/tickets/server';
 import { ticketQuerySchema, normalizeTicketQuery } from '@/lib/tickets/search';
 import { normalizeTicketPagination } from '@/lib/tickets/pagination';
-import { ticketStatusSchema, ticketPrioritySchema } from '@/lib/tickets/schema';
+import { ticketStatusSchema, ticketPrioritySchema, ticketAssigneeFilterSchema } from '@/lib/tickets/schema';
 import type { TicketPaginationResult } from '@/lib/tickets/pagination';
 
 export async function GET(request: Request) {
@@ -40,6 +40,11 @@ export async function GET(request: Request) {
       priority = result.data;
     }
 
+    const assigneeResult = ticketAssigneeFilterSchema.safeParse({ assignee: searchParams.get('assignee') });
+    if (searchParams.has('assignee') && !assigneeResult.success) {
+      return NextResponse.json({ error: 'Invalid assignee' }, { status: 400 });
+    }
+
     const pagination = normalizeTicketPagination({
       page: rawPage ? Number(rawPage) : undefined,
       limit: rawLimit ? Number(rawLimit) : undefined,
@@ -48,6 +53,7 @@ export async function GET(request: Request) {
     const result: TicketPaginationResult<Awaited<ReturnType<typeof getTickets>>['data'][number]> = await getTickets({
       ...(status ? { status } : {}),
       ...(priority ? { priority } : {}),
+      ...(assigneeResult.success && assigneeResult.data.assignee ? { assignee: assigneeResult.data.assignee } : {}),
       search: normalized.q ? { q: normalized.q } : undefined,
       sort: normalized.sort,
       page: pagination.page,
