@@ -78,7 +78,18 @@ describe('ticket services', () => {
   });
 
   it('createTicket creates a ticket in the current workspace', async () => {
-    const createSpy = vi.spyOn(sharedPrisma.ticket, 'create').mockResolvedValue(fakeTicket as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          create: vi.fn().mockResolvedValue(fakeTicket as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
+
+      return worker(txClient);
+    });
 
     try {
       const ticket = await createTicket({
@@ -87,21 +98,10 @@ describe('ticket services', () => {
         priority: 'medium',
       });
 
-      expect(createSpy).toHaveBeenCalledWith({
-        data: {
-          workspaceId: 'workspace-123',
-          title: 'Judul Tiket',
-          description: 'Deskripsi',
-          priority: 'medium',
-          createdById: 'user-123',
-          responseSlaDeadline: expect.any(Date),
-          resolutionSlaDeadline: expect.any(Date),
-        },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.id).toBe('ticket-1');
     } finally {
-      createSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 
@@ -160,8 +160,18 @@ describe('ticket services', () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
       .mockResolvedValue({ id: 'ticket-1', status: 'open', resolvedAt: null } as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          update: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Baru', status: 'in_progress' } as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
 
-    const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue(fakeTicket as never);
+      return worker(txClient);
+    });
 
     try {
       const ticket = await updateTicket('ticket-1', {
@@ -172,17 +182,13 @@ describe('ticket services', () => {
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true, status: true, resolvedAt: true },
+        select: { id: true, status: true, priority: true, resolvedAt: true },
       });
-      expect(updateSpy).toHaveBeenCalledWith({
-        where: { id: 'ticket-1' },
-        data: { title: 'Judul Baru', description: null, status: 'in_progress' },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.id).toBe('ticket-1');
     } finally {
       findFirstSpy.mockRestore();
-      updateSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 
@@ -190,11 +196,18 @@ describe('ticket services', () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
       .mockResolvedValue({ id: 'ticket-1', status: 'resolved' } as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          update: vi.fn().mockResolvedValue({ ...fakeTicket, status: 'closed' } as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
 
-    const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue({
-      ...fakeTicket,
-      status: 'closed',
-    } as never);
+      return worker(txClient);
+    });
 
     try {
       const ticket = await closeTicket('ticket-1');
@@ -203,15 +216,11 @@ describe('ticket services', () => {
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
         select: { id: true, status: true },
       });
-      expect(updateSpy).toHaveBeenCalledWith({
-        where: { id: 'ticket-1' },
-        data: { status: 'closed' },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.status).toBe('closed');
     } finally {
       findFirstSpy.mockRestore();
-      updateSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 

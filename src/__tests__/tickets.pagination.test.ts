@@ -7,8 +7,6 @@ vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
 }));
 
-const mockedGetCurrentMembership = vi.mocked(getCurrentMembership);
-
 const fakeMembership = {
   userId: 'user-123',
   workspaceId: 'workspace-123',

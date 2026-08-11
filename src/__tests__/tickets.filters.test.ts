@@ -296,8 +296,19 @@ describe('ticket filters', () => {
     expect(filters).toEqual({ search: '', status: undefined, priority: undefined, assignee: undefined });
   });
 
-  it('getTickets rejects invalid assignee value', async () => {
-    await expect(getTickets({ assignee: 'invalid' as never })).rejects.toThrow();
+  it('getTickets returns empty data for an invalid assignee string', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      const result = await getTickets({ assignee: 'invalid' as never });
+
+      expect(result.data).toHaveLength(0);
+      expect(result.total).toBe(0);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
   });
 
   it('getTickets filters by priority only', async () => {
