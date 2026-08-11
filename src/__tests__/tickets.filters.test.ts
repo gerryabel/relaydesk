@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prisma as sharedPrisma } from '@/lib/db/prisma';
 import { getTickets } from '@/lib/tickets/server';
 import { getCurrentMembership } from '@/lib/workspace/server';
-import { ticketFiltersSchema, ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema } from '@/lib/tickets/schema';
+import { ticketFiltersSchema, ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema, ticketAssigneeFilterSchema } from '@/lib/tickets/schema';
 import { parseFilters } from '@/app/dashboard/tickets/page';
 import { createTicketSort, normalizeTicketSort, mapTicketSortToOrderBy } from '@/lib/tickets/sort';
 
@@ -80,21 +80,29 @@ describe('ticket filters', () => {
   });
 
   it('ticketPriorityFilterSchema rejects invalid priority', () => {
-    expect(() => ticketPriorityFilterSchema.parse({ priority: 'INVALID' })).toThrow();
+    expect(() => ticketPriorityFilterSchema.parse({ priority: 'invalid' })).toThrow();
   });
 
-  it('getTickets filters by status only', async () => {
+  it('ticketAssigneeFilterSchema accepts valid assignee', () => {
+    expect(() => ticketAssigneeFilterSchema.parse({ assignee: 'user-1' })).not.toThrow();
+  });
+
+  it('ticketAssigneeFilterSchema rejects blank assignee', () => {
+    expect(() => ticketAssigneeFilterSchema.parse({ assignee: '   ' })).toThrow();
+  });
+
+  it('getTickets filters by assignee only', async () => {
     const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
     const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
 
     try {
-      await getTickets({ status: 'closed' });
+      await getTickets({ assignee: 'user-456' });
 
       expect(countSpy).toHaveBeenCalledWith({
-        where: { workspaceId: 'workspace-123', status: 'closed' },
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
       });
       expect(findManySpy).toHaveBeenCalledWith({
-        where: { workspaceId: 'workspace-123', status: 'closed' },
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
         include: { createdBy: true },
         orderBy: { createdAt: 'desc' },
         skip: 0,
@@ -104,6 +112,192 @@ describe('ticket filters', () => {
       findManySpy.mockRestore();
       countSpy.mockRestore();
     }
+  });
+
+  it('getTickets combines status and assignee filters', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      await getTickets({ status: 'open', assignee: 'user-456' });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'open', assignedToId: 'user-456' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'open', assignedToId: 'user-456' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines priority and assignee filters', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      await getTickets({ priority: 'high', assignee: 'user-456' });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', priority: 'high', assignedToId: 'user-456' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', priority: 'high', assignedToId: 'user-456' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines status, priority, and assignee filters', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      await getTickets({ status: 'open', priority: 'high', assignee: 'user-456' });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'open', priority: 'high', assignedToId: 'user-456' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', status: 'open', priority: 'high', assignedToId: 'user-456' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines search and assignee filters', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      await getTickets({ assignee: 'user-456', search: 'Judul Tiket' });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          assignedToId: 'user-456',
+          title: { contains: 'Judul Tiket', mode: 'insensitive' },
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          assignedToId: 'user-456',
+          title: { contains: 'Judul Tiket', mode: 'insensitive' },
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves assignee filter with sorting', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ assignee: 'user-456', sort: { field: 'priority', direction: 'asc' } });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
+        include: { createdBy: true },
+        orderBy: { priority: 'asc' },
+        skip: 0,
+        take: 20,
+      });
+      expect(result.data).toHaveLength(1);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves assignee filter with pagination', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ assignee: 'user-456', page: 1, limit: 10 });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123', assignedToId: 'user-456' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 10,
+      });
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(10);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('parseFilters preserves assignee alongside valid filters', () => {
+    const filters = parseFilters({
+      search: 'login',
+      status: 'open',
+      priority: 'high',
+      assignee: 'user-456',
+    } as Record<string, unknown>);
+
+    expect(filters).toEqual({ search: 'login', status: 'open', priority: 'high', assignee: 'user-456' });
+  });
+
+  it('parseFilters preserves valid fields when one query parameter is invalid', () => {
+    const filters = parseFilters({
+      search: 'login',
+      status: 'INVALID',
+      priority: 'high',
+      assignee: 'user-456',
+    } as Record<string, unknown>);
+
+    expect(filters).toEqual({ search: 'login', status: undefined, priority: 'high', assignee: 'user-456' });
+  });
+
+  it('parseFilters returns empty filters when all query parameters are invalid', () => {
+    const filters = parseFilters({
+      search: '',
+      status: 'INVALID',
+      priority: 'INVALID',
+      assignee: '',
+    } as Record<string, unknown>);
+
+    expect(filters).toEqual({ search: '', status: undefined, priority: undefined, assignee: undefined });
+  });
+
+  it('getTickets rejects invalid assignee value', async () => {
+    await expect(getTickets({ assignee: 'invalid' as never })).rejects.toThrow();
   });
 
   it('getTickets filters by priority only', async () => {

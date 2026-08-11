@@ -3,20 +3,23 @@ import TicketCard from '@/components/tickets/ticket-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import TicketFilterControls from '@/components/tickets/ticket-filters';
 import TicketSortControls from '@/components/tickets/ticket-sort-control';
-import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema } from '@/lib/tickets/schema';
+import { ticketSearchSchema, ticketStatusFilterSchema, ticketPriorityFilterSchema, ticketAssigneeFilterSchema } from '@/lib/tickets/schema';
 import type { TicketFiltersInput } from '@/lib/tickets/schema';
 import Link from 'next/link';
+import { getWorkspaceMembers } from '@/lib/workspace/server';
 
 export function parseFilters(resolved: Record<string, unknown>): TicketFiltersInput {
   const search = (resolved.q ?? resolved.search) as string | undefined;
   const searchParsed = ticketSearchSchema.safeParse({ search });
   const statusParsed = ticketStatusFilterSchema.safeParse({ status: resolved.status });
   const priorityParsed = ticketPriorityFilterSchema.safeParse({ priority: resolved.priority });
+  const assigneeParsed = ticketAssigneeFilterSchema.safeParse({ assignee: resolved.assignee });
 
   return {
     search: searchParsed.success ? searchParsed.data.search : undefined,
     status: statusParsed.success ? statusParsed.data.status : undefined,
     priority: priorityParsed.success ? priorityParsed.data.priority : undefined,
+    assignee: assigneeParsed.success ? assigneeParsed.data.assignee : undefined,
   };
 }
 
@@ -35,7 +38,8 @@ function buildQueryString(
   searchParams: URLSearchParams,
   nextSearch: string,
   nextStatus: string,
-  nextPriority: string
+  nextPriority: string,
+  nextAssignee: string
 ) {
   const params = new URLSearchParams(searchParams.toString());
 
@@ -57,6 +61,12 @@ function buildQueryString(
     params.set('priority', nextPriority);
   }
 
+  if (!nextAssignee) {
+    params.delete('assignee');
+  } else {
+    params.set('assignee', nextAssignee);
+  }
+
   return params.toString();
 }
 
@@ -64,11 +74,13 @@ function buildResolvedSearchParams(resolved: Record<string, unknown>) {
   const search = (resolved.q ?? resolved.search) as string | undefined;
   const status = (resolved.status as string | undefined) ?? '';
   const priority = (resolved.priority as string | undefined) ?? '';
+  const assignee = (resolved.assignee as string | undefined) ?? '';
 
   return new URLSearchParams({
     ...(search ? { search } : {}),
     ...(status ? { status } : {}),
     ...(priority ? { priority } : {}),
+    ...(assignee ? { assignee } : {}),
   });
 }
 
@@ -95,10 +107,18 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
   const page = parsePage(resolved);
   const limit = parseLimit(resolved);
   const resolvedSearchParams = buildResolvedSearchParams(resolved);
+  const members = await getWorkspaceMembers();
 
-  const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search ? { q: filters.search } : undefined, page, limit });
+  const result = await getTickets({
+    status: filters.status,
+    priority: filters.priority,
+    assignee: filters.assignee,
+    search: filters.search ? { q: filters.search } : undefined,
+    page,
+    limit,
+  });
 
-  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority);
+  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority || filters.assignee);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -114,7 +134,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
 
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <TicketFilterControls />
+            <TicketFilterControls members={members} />
             <TicketSortControls />
           </div>
         </div>
@@ -126,7 +146,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Pencarian: {filters.search}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '', filters.assignee ?? '')}`}
                   aria-label={`Hapus filter pencarian: ${filters.search}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
@@ -138,7 +158,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Status: {filters.status}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '', filters.assignee ?? '')}`}
                   aria-label={`Hapus filter status: ${filters.status}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
@@ -150,8 +170,20 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Prioritas: {filters.priority}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '', filters.assignee ?? '')}`}
                   aria-label={`Hapus filter prioritas: ${filters.priority}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
+              </span>
+            ) : null}
+            {filters.assignee ? (
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+                Assignee: {filters.assignee}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', filters.priority ?? '', '')}`}
+                  aria-label={`Hapus filter assignee: ${filters.assignee}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
                   ×

@@ -42,6 +42,7 @@ export const ticketFiltersSchema = z.object({
   search: z.string().trim().max(200, 'Pencarian maksimal 200 karakter').optional(),
   status: ticketStatusSchema.optional(),
   priority: ticketPrioritySchema.optional(),
+  assignee: z.string().trim().min(1, 'Assignee wajib diisi').max(64, 'Assignee ID maksimal 64 karakter').optional(),
 });
 
 export const ticketSearchSchema = z.object({
@@ -54,6 +55,10 @@ export const ticketStatusFilterSchema = z.object({
 
 export const ticketPriorityFilterSchema = z.object({
   priority: ticketPrioritySchema.optional(),
+});
+
+export const ticketAssigneeFilterSchema = z.object({
+  assignee: z.string().trim().min(1, 'Assignee wajib diisi').max(64, 'Assignee ID maksimal 64 karakter').optional(),
 });
 
 export const assignTicketSchema = z.object({
