@@ -3,10 +3,16 @@ import { getTicketById, TicketNotFoundError } from '@/lib/tickets/server';
 import { getMessages } from '@/lib/messages/server';
 import type { MessageWithCreator } from '@/lib/messages/server';
 import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
+import { getWorkspaceMembers } from '@/lib/workspace/server';
+import { getTicketActivities } from '@/lib/tickets/activity';
+import AssignTicketForm from '@/components/tickets/assign-ticket-form';
 import CreateMessageForm from '@/components/tickets/create-message-form';
+import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
+import ActivityTimeline from '@/components/tickets/activity-timeline';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { getResponseSlaStatus, getResolutionSlaStatus } from '@/lib/tickets/sla';
 
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -15,6 +21,7 @@ type TicketDetailPageProps = {
 const statusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
   open: 'blue',
   in_progress: 'amber',
+  waiting_customer: 'amber',
   resolved: 'emerald',
   closed: 'neutral',
 };
@@ -22,9 +29,30 @@ const statusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red
 const statusLabel: Record<string, string> = {
   open: 'Open',
   in_progress: 'In Progress',
+  waiting_customer: 'Waiting Customer',
   resolved: 'Resolved',
   closed: 'Closed',
 };
+
+const slaStatusLabel: Record<string, string> = {
+  pending: 'Pending',
+  completed: 'Completed',
+  overdue: 'Overdue',
+};
+
+const slaStatusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
+  pending: 'blue',
+  completed: 'emerald',
+  overdue: 'red',
+};
+
+function formatDeadline(deadline: Date | null) {
+  if (!deadline) {
+    return 'Not set';
+  }
+
+  return new Date(deadline).toLocaleString('id-ID');
+}
 
 function MessageItem({ message }: { message: MessageWithCreator }) {
   const author = message.createdBy?.name ?? 'Unknown';
@@ -49,33 +77,51 @@ export async function generateMetadata({ params }: TicketDetailPageProps) {
 }
 
 export default async function TicketDetailPage({ params }: TicketDetailPageProps) {
-  const { id } = await params;
+  const resolved = await params;
   let ticket;
+  let messages: MessageWithCreator[] = [];
+  let activities: Awaited<ReturnType<typeof getTicketActivities>> = [];
 
   try {
-    ticket = await getTicketById(id);
+    ticket = await getTicketById(resolved.id);
   } catch (error) {
     if (error instanceof TicketNotFoundError) {
-      notFound();
+      throw notFound();
     }
-
     throw error;
   }
 
-  let messages: MessageWithCreator[] = [];
   try {
-    messages = await getMessages(id);
+    messages = await getMessages(resolved.id);
   } catch (error) {
     if (error instanceof MessagesTicketNotFoundError) {
-      notFound();
+      throw notFound();
     }
-
     throw error;
+  }
+
+  try {
+    activities = await getTicketActivities(resolved.id);
+  } catch (error) {
+    if (error instanceof TicketNotFoundError) {
+      throw notFound();
+    }
+    console.error('Failed to load ticket activities', error);
   }
 
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
+  const now = new Date();
+  const responseStatus = getResponseSlaStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, now);
+  const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
+
+  let members: Array<{ id: string; name: string; email: string }> = [];
+  try {
+    members = await getWorkspaceMembers();
+  } catch (error) {
+    console.error('Failed to load workspace members', error);
+  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -121,6 +167,60 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </p>
         </section>
 
+        <section className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">SLA</h2>
+          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Response SLA</p>
+              <div className="mt-1 flex flex-col gap-1">
+                <div>
+                  <Badge tone={slaStatusTone[responseStatus]}>{slaStatusLabel[responseStatus]}</Badge>
+                </div>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Deadline: {formatDeadline(ticket.responseSlaDeadline)}
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  First response: {ticket.firstResponseAt ? new Date(ticket.firstResponseAt).toLocaleString('id-ID') : 'Not yet'}
+                </p>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Resolution SLA</p>
+              <div className="mt-1 flex flex-col gap-1">
+                <div>
+                  <Badge tone={slaStatusTone[resolutionStatus]}>{slaStatusLabel[resolutionStatus]}</Badge>
+                </div>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Deadline: {formatDeadline(ticket.resolutionSlaDeadline)}
+                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Resolved at: {ticket.resolvedAt ? new Date(ticket.resolvedAt).toLocaleString('id-ID') : 'Not yet'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Assignment</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Assign tiket ini kepada member workspace.
+            </p>
+          </header>
+          <AssignTicketForm ticket={ticket} members={members} />
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Workflow</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Update ticket status using allowed transitions.
+            </p>
+          </header>
+          <TicketTransitionForm ticket={ticket} />
+        </section>
+
         <section className="flex flex-col gap-4">
           <header className="flex flex-col gap-1">
             <h2 className="text-xl font-semibold">Messages</h2>
@@ -146,6 +246,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <div id="message-form" className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
             <CreateMessageForm ticketId={ticket.id} />
           </div>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Activity Timeline</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Riwayat perubahan penting pada tiket ini.
+            </p>
+          </header>
+          <ActivityTimeline activities={activities} />
         </section>
       </div>
     </div>

@@ -20,13 +20,15 @@ const PRIORITY_OPTIONS = [
 
 export type TicketFilterControlsProps = {
   controlsClassName?: string;
+  members?: Array<{ id: string; name: string; email: string }>;
 };
 
 function buildQueryString(
   searchParams: ReturnType<typeof useSearchParams>,
   nextSearch: string,
   nextStatus: string,
-  nextPriority: string
+  nextPriority: string,
+  nextAssignee: string
 ) {
   const params = new URLSearchParams(searchParams.toString());
 
@@ -48,10 +50,16 @@ function buildQueryString(
     params.set('priority', nextPriority);
   }
 
+  if (!nextAssignee) {
+    params.delete('assignee');
+  } else {
+    params.set('assignee', nextAssignee);
+  }
+
   return params.toString();
 }
 
-export default function TicketFilterControls({ controlsClassName }: TicketFilterControlsProps) {
+export default function TicketFilterControls({ controlsClassName, members }: TicketFilterControlsProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -59,6 +67,7 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
   const search = searchParams.get('search') ?? '';
   const status = searchParams.get('status') ?? '';
   const priority = searchParams.get('priority') ?? '';
+  const assignee = searchParams.get('assignee') ?? '';
 
   return (
     <form
@@ -71,10 +80,10 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
           <span className="text-neutral-600 dark:text-neutral-300">Pencarian</span>
           <input
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
-            placeholder="Cari judul tiket..."
+            placeholder="Cari tiket..."
             defaultValue={search}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, event.target.value, status, priority);
+              const query = buildQueryString(searchParams, event.target.value, status, priority, assignee);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           />
@@ -86,7 +95,7 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={status}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, search, event.target.value, priority);
+              const query = buildQueryString(searchParams, search, event.target.value, priority, assignee);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           >
@@ -104,13 +113,32 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={priority}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, search, status, event.target.value);
+              const query = buildQueryString(searchParams, search, status, event.target.value, assignee);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           >
             {PRIORITY_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-neutral-600 dark:text-neutral-300">Assignee</span>
+          <select
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
+            defaultValue={assignee}
+            onChange={(event) => {
+              const query = buildQueryString(searchParams, search, status, priority, event.target.value);
+              router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+            }}
+          >
+            <option value="">Semua assignee</option>
+            {(members ?? []).map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name}
               </option>
             ))}
           </select>

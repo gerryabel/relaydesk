@@ -44,14 +44,18 @@ export async function createMessage(ticketId: string, input: CreateMessageInput)
       id: ticketId,
       workspaceId: membership.workspaceId,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      createdById: true,
+      firstResponseAt: true,
+    },
   });
 
   if (!ticket) {
     throw new TicketNotFoundError();
   }
 
-  return prisma.message.create({
+  const message = await prisma.message.create({
     data: {
       ticketId,
       body: parsed.body,
@@ -70,7 +74,18 @@ export async function createMessage(ticketId: string, input: CreateMessageInput)
         },
       },
     },
-  }) as Promise<MessageWithCreator>;
+  });
+
+  const isQualifyingAgentResponse = !ticket.firstResponseAt && membership.userId !== ticket.createdById;
+
+  if (isQualifyingAgentResponse) {
+    await prisma.ticket.update({
+      where: { id: ticket.id },
+      data: { firstResponseAt: new Date() },
+    });
+  }
+
+  return message as MessageWithCreator;
 }
 
 export async function getMessages(ticketId: string): Promise<MessageWithCreator[]> {

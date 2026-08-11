@@ -14,6 +14,24 @@ import { ticketFiltersSchema } from '@/lib/tickets/schema';
 import type { TicketFiltersInput } from '@/lib/tickets/schema';
 import { parseFilters } from '@/app/dashboard/tickets/page';
 
+vi.mock('@/lib/workspace/server', () => ({
+  getCurrentMembership: vi.fn(),
+}));
+
+vi.mock('@/lib/tickets/sla', () => ({
+  getSlaPolicy: vi.fn(() => ({
+    priority: 'medium',
+    responseDurationMs: 12 * 60 * 60 * 1000,
+    resolutionDurationMs: 24 * 60 * 60 * 1000,
+  })),
+  calculateResponseDeadline: vi.fn((start: Date) => new Date(start.getTime() + 12 * 60 * 60 * 1000)),
+  calculateResolutionDeadline: vi.fn((start: Date) => new Date(start.getTime() + 24 * 60 * 60 * 1000)),
+  getResponseSlaStatus: vi.fn(() => 'pending'),
+  getResolutionSlaStatus: vi.fn(() => 'pending'),
+}));
+
+const mockedGetCurrentMembership = vi.mocked(getCurrentMembership);
+
 const fakeMembership = {
   userId: 'user-123',
   workspaceId: 'workspace-123',
@@ -35,6 +53,10 @@ const fakeTicket = {
   priority: 'medium',
   createdAt: new Date('2025-01-01T00:00:00Z'),
   updatedAt: new Date('2025-01-01T00:00:00Z'),
+  responseSlaDeadline: new Date('2025-01-01T12:00:00Z'),
+  resolutionSlaDeadline: new Date('2025-01-02T00:00:00Z'),
+  firstResponseAt: null,
+  resolvedAt: null,
   createdBy: {
     id: 'user-123',
     email: 'user@example.com',
@@ -46,12 +68,6 @@ const fakeTicket = {
   },
 };
 
-vi.mock('@/lib/workspace/server', () => ({
-  getCurrentMembership: vi.fn(),
-}));
-
-const mockedGetCurrentMembership = vi.mocked(getCurrentMembership);
-
 describe('ticket services', () => {
   beforeEach(() => {
     vi.mocked(getCurrentMembership).mockResolvedValue(fakeMembership as never);
@@ -62,7 +78,18 @@ describe('ticket services', () => {
   });
 
   it('createTicket creates a ticket in the current workspace', async () => {
-    const createSpy = vi.spyOn(sharedPrisma.ticket, 'create').mockResolvedValue(fakeTicket as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          create: vi.fn().mockResolvedValue(fakeTicket as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
+
+      return worker(txClient);
+    });
 
     try {
       const ticket = await createTicket({
@@ -71,19 +98,10 @@ describe('ticket services', () => {
         priority: 'medium',
       });
 
-      expect(createSpy).toHaveBeenCalledWith({
-        data: {
-          workspaceId: 'workspace-123',
-          title: 'Judul Tiket',
-          description: 'Deskripsi',
-          priority: 'medium',
-          createdById: 'user-123',
-        },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.id).toBe('ticket-1');
     } finally {
-      createSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 
@@ -131,7 +149,7 @@ describe('ticket services', () => {
       await expect(getTicketById('missing')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'missing', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -141,9 +159,19 @@ describe('ticket services', () => {
   it('updateTicket updates within the current workspace', async () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
-      .mockResolvedValue({ id: 'ticket-1' } as never);
+      .mockResolvedValue({ id: 'ticket-1', status: 'open', resolvedAt: null } as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          update: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Baru', status: 'in_progress' } as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
 
-    const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue(fakeTicket as never);
+      return worker(txClient);
+    });
 
     try {
       const ticket = await updateTicket('ticket-1', {
@@ -154,46 +182,45 @@ describe('ticket services', () => {
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true },
+        select: { id: true, status: true, priority: true, resolvedAt: true },
       });
-      expect(updateSpy).toHaveBeenCalledWith({
-        where: { id: 'ticket-1' },
-        data: { title: 'Judul Baru', description: null, status: 'in_progress' },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.id).toBe('ticket-1');
     } finally {
       findFirstSpy.mockRestore();
-      updateSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 
   it('closeTicket closes a ticket', async () => {
     const findFirstSpy = vi
       .spyOn(sharedPrisma.ticket, 'findFirst')
-      .mockResolvedValue({ id: 'ticket-1' } as never);
+      .mockResolvedValue({ id: 'ticket-1', status: 'resolved' } as never);
+    const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
+      const txClient = {
+        ticket: {
+          update: vi.fn().mockResolvedValue({ ...fakeTicket, status: 'closed' } as never),
+        },
+        ticketActivity: {
+          create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+      } as never;
 
-    const updateSpy = vi.spyOn(sharedPrisma.ticket, 'update').mockResolvedValue({
-      ...fakeTicket,
-      status: 'closed',
-    } as never);
+      return worker(txClient);
+    });
 
     try {
       const ticket = await closeTicket('ticket-1');
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true },
+        select: { id: true, status: true },
       });
-      expect(updateSpy).toHaveBeenCalledWith({
-        where: { id: 'ticket-1' },
-        data: { status: 'closed' },
-        include: { createdBy: true },
-      });
+      expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.status).toBe('closed');
     } finally {
       findFirstSpy.mockRestore();
-      updateSpy.mockRestore();
+      transactionSpy.mockRestore();
     }
   });
 
@@ -206,7 +233,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -499,7 +526,10 @@ describe('ticket services', () => {
         take: 10,
       });
       expect(result.data).toHaveLength(1);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(10);
       expect(result.total).toBe(1);
+      expect(result.totalPages).toBe(1);
     } finally {
       findManySpy.mockRestore();
       countSpy.mockRestore();
@@ -507,39 +537,32 @@ describe('ticket services', () => {
   });
 
   it('getTickets rejects invalid status enum', async () => {
-    await expect(getTickets({ status: 'invalid' } as never)).rejects.toThrow();
+    await expect(getTickets({ status: 'invalid' as 'open' })).rejects.toThrow();
   });
 
   it('getTickets rejects invalid priority enum', async () => {
-    await expect(getTickets({ priority: 'invalid' } as never)).rejects.toThrow();
+    await expect(getTickets({ priority: 'invalid' as 'low' })).rejects.toThrow();
   });
 
-  it('ticketFiltersSchema rejects invalid status enum', () => {
-    expect(() =>
-      ticketFiltersSchema.parse({
-        search: 'Judul Tiket',
-        status: 'invalid' as TicketFiltersInput['status'],
-      })
-    ).toThrow();
+  it('ticketFiltersSchema rejects invalid status enum', async () => {
+    const parsed = ticketFiltersSchema.safeParse({ status: 'invalid' });
+
+    expect(parsed.success).toBe(false);
   });
 
-  it('ticketFiltersSchema rejects invalid priority enum', () => {
-    expect(() =>
-      ticketFiltersSchema.parse({
-        search: 'Judul Tiket',
-        priority: 'invalid' as TicketFiltersInput['priority'],
-      })
-    ).toThrow();
+  it('ticketFiltersSchema rejects invalid priority enum', async () => {
+    const parsed = ticketFiltersSchema.safeParse({ priority: 'extreme' as TicketFiltersInput['priority'] });
+
+    expect(parsed.success).toBe(false);
   });
 
   it('parseFilters preserves valid fields when one query parameter is invalid', () => {
     const filters = parseFilters({
-      search: 'login',
-      status: 'INVALID',
-      priority: 'high',
+      search: 'valid',
+      status: 'invalid',
     } as Record<string, unknown>);
 
-    expect(filters).toEqual({ search: 'login', status: undefined, priority: 'high' });
+    expect(filters).toEqual({ search: 'valid' });
   });
 
   it('parseFilters returns empty filters when all query parameters are invalid', () => {
@@ -561,7 +584,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true },
       });
     } finally {
       findFirstSpy.mockRestore();

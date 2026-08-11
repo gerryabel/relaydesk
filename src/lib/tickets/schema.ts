@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ticketStatusSchema = z.enum(['open', 'in_progress', 'resolved', 'closed']);
+export const ticketStatusSchema = z.enum(['open', 'in_progress', 'waiting_customer', 'resolved', 'closed']);
 
 export const ticketPrioritySchema = z.enum(['low', 'medium', 'high', 'urgent']);
 
@@ -42,6 +42,7 @@ export const ticketFiltersSchema = z.object({
   search: z.string().trim().max(200, 'Pencarian maksimal 200 karakter').optional(),
   status: ticketStatusSchema.optional(),
   priority: ticketPrioritySchema.optional(),
+  assignee: z.string().trim().min(1, 'Assignee wajib diisi').max(64, 'Assignee ID maksimal 64 karakter').optional(),
 });
 
 export const ticketSearchSchema = z.object({
@@ -56,4 +57,16 @@ export const ticketPriorityFilterSchema = z.object({
   priority: ticketPrioritySchema.optional(),
 });
 
+export const ticketAssigneeFilterSchema = z.object({
+  assignee: z.string().trim().min(1, 'Assignee wajib diisi').max(64, 'Assignee ID maksimal 64 karakter').optional(),
+});
+
+export const assignTicketSchema = z.object({
+  assigneeId: z.string().trim().min(1, 'Assignee wajib diisi'),
+});
+
+export const unassignTicketSchema = z.object({});
+
+export type AssignTicketInput = z.infer<typeof assignTicketSchema>;
+export type UnassignTicketInput = z.infer<typeof unassignTicketSchema>;
 export type TicketFiltersInput = z.infer<typeof ticketFiltersSchema>;

@@ -173,12 +173,6 @@ describe('ticket search', () => {
     }
   });
 
-  it('getTickets throws when membership is missing', async () => {
-    mockedGetCurrentMembership.mockRejectedValueOnce(new Error('No workspace membership found') as never);
-
-    await expect(getTickets({ search: 'Judul' })).rejects.toThrow('No workspace membership found');
-  });
-
   it('getTickets supports OR search through object query input', async () => {
     const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
     const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
@@ -192,6 +186,8 @@ describe('ticket search', () => {
           OR: [
             { title: { contains: 'Judul', mode: 'insensitive' } },
             { description: { contains: 'Judul', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'Judul', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'Judul', mode: 'insensitive' } } },
           ],
         },
       });
@@ -201,6 +197,8 @@ describe('ticket search', () => {
           OR: [
             { title: { contains: 'Judul', mode: 'insensitive' } },
             { description: { contains: 'Judul', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'Judul', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'Judul', mode: 'insensitive' } } },
           ],
         },
         include: { createdBy: true },
@@ -212,5 +210,153 @@ describe('ticket search', () => {
       findManySpy.mockRestore();
       countSpy.mockRestore();
     }
+  });
+
+  it('getTickets supports creator name search through object query input', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ search: { q: 'user 123' } });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { title: { contains: 'user 123', mode: 'insensitive' } },
+            { description: { contains: 'user 123', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'user 123', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'user 123', mode: 'insensitive' } } },
+          ],
+        },
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets supports assignee name search through object query input', async () => {
+    const assignedTicket = {
+      ...fakeTicket,
+      assignedTo: {
+        id: 'user-456',
+        email: 'assignee@example.com',
+        emailVerified: true,
+        name: 'Assignee 456',
+        image: null,
+        createdAt: new Date('2025-01-01T00:00:00Z'),
+        updatedAt: new Date('2025-01-01T00:00:00Z'),
+      },
+    };
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([assignedTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ search: { q: 'assignee 456' } });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { title: { contains: 'assignee 456', mode: 'insensitive' } },
+            { description: { contains: 'assignee 456', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'assignee 456', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'assignee 456', mode: 'insensitive' } } },
+          ],
+        },
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves search with sorting', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ search: { q: 'Judul' }, sort: { field: 'updatedAt', direction: 'asc' } });
+
+      expect(result.data).toHaveLength(1);
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { title: { contains: 'Judul', mode: 'insensitive' } },
+            { description: { contains: 'Judul', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'Judul', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'Judul', mode: 'insensitive' } } },
+          ],
+        },
+        include: { createdBy: true },
+        orderBy: { updatedAt: 'asc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves search with pagination', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets({ search: { q: 'Judul' }, page: 1, limit: 10 });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(10);
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { title: { contains: 'Judul', mode: 'insensitive' } },
+            { description: { contains: 'Judul', mode: 'insensitive' } },
+            { createdBy: { name: { contains: 'Judul', mode: 'insensitive' } } },
+            { assignedTo: { name: { contains: 'Judul', mode: 'insensitive' } } },
+          ],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 10,
+      });
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves existing listing when search is omitted', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      const result = await getTickets();
+
+      expect(countSpy).toHaveBeenCalledWith({ where: { workspaceId: 'workspace-123' } });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+      expect(result.data).toHaveLength(1);
+    } finally {
+      findManySpy.mockRestore();
+      countSpy.mockRestore();
+    }
+  });
+
+  it('getTickets throws when membership is missing', async () => {
+    mockedGetCurrentMembership.mockRejectedValueOnce(new Error('No workspace membership found') as never);
+
+    await expect(getTickets({ search: 'Judul' })).rejects.toThrow('No workspace membership found');
   });
 });

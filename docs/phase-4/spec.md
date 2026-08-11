@@ -141,15 +141,20 @@ Sorting berdasarkan:
 
 ### Scope
 
-* Cursor-based pagination.
-* Next page.
+* Page-number pagination menggunakan offset/limit pada daftar ticket.
 * Previous page.
+* Next page.
+* Pagination metadata: `total`, `totalPages`, `hasPreviousPage`, `hasNextPage`.
 
 ### Acceptance Criteria
 
-* Pagination stabil.
-* Tidak ada duplicate maupun missing data.
-* Search, filter, dan sorting tetap kompatibel.
+* Pagination stabil berbasis page-number dan offset/limit.
+* Tidak ada duplicate maupun missing data dalam navigasi halaman.
+* Search, filter, sorting, dan assignee tetap kompatibel dengan pagination.
+* `page` dan `limit` dapat dibaca dan dipertahankan melalui URL.
+* Invalid, negatif, atau nol `page`/`limit` ditangani dengan nilai aman.
+* `limit` memiliki guardrail maksimum.
+* Page clamping untuk `page > totalPages` menghasilkan halaman terakhir yang valid.
 
 ---
 
