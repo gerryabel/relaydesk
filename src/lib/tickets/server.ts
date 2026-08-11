@@ -65,20 +65,32 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
   const responseSlaDeadline = calculateResponseDeadline(now, parsed.priority);
   const resolutionSlaDeadline = calculateResolutionDeadline(now, parsed.priority);
 
-  return prisma.ticket.create({
-    data: {
-      workspaceId: membership.workspaceId,
-      title: parsed.title,
-      description: parsed.description,
-      priority: parsed.priority,
-      createdById: membership.userId,
-      responseSlaDeadline,
-      resolutionSlaDeadline,
-    },
-    include: {
-      createdBy: true,
-    },
-  }) as Promise<TicketWithCreator>;
+  return prisma.$transaction(async (tx) => {
+    const ticket = await tx.ticket.create({
+      data: {
+        workspaceId: membership.workspaceId,
+        title: parsed.title,
+        description: parsed.description,
+        priority: parsed.priority,
+        createdById: membership.userId,
+        responseSlaDeadline,
+        resolutionSlaDeadline,
+      },
+      include: {
+        createdBy: true,
+      },
+    });
+
+    await tx.ticketActivity.create({
+      data: {
+        ticketId: ticket.id,
+        actorId: membership.userId,
+        type: 'TICKET_CREATED',
+      },
+    });
+
+    return ticket as TicketWithCreator;
+  });
 }
 
 type StatusFilter = z.infer<typeof ticketStatusSchema> | undefined;
@@ -208,6 +220,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     select: {
       id: true,
       status: true,
+      priority: true,
       resolvedAt: true,
     },
   });
@@ -216,23 +229,60 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     throw new TicketNotFoundError();
   }
 
+  const data: Prisma.TicketUpdateInput = { ...parsed };
+
   if (parsed.status && parsed.status !== existing.status) {
     assertTransitionAllowed(existing.status, parsed.status);
   }
-
-  const data: Prisma.TicketUpdateInput = { ...parsed };
 
   if (parsed.status === 'resolved' && !existing.resolvedAt) {
     data.resolvedAt = new Date();
   }
 
-  return prisma.ticket
-    .update({
+  const hasStatusChange = parsed.status !== undefined && parsed.status !== existing.status;
+  const hasPriorityChange = parsed.priority !== undefined && parsed.priority !== existing.priority;
+
+  if (!hasStatusChange && !hasPriorityChange) {
+    return prisma.ticket
+      .update({
+        where: { id },
+        data,
+        include: { createdBy: true },
+      })
+      .then((item) => item as TicketWithCreator);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.ticket.update({
       where: { id },
       data,
       include: { createdBy: true },
-    })
-    .then((item) => item as TicketWithCreator);
+    });
+
+    if (hasStatusChange && parsed.status) {
+      await tx.ticketActivity.create({
+        data: {
+          ticketId: updated.id,
+          actorId: membership.userId,
+          type: 'STATUS_CHANGED',
+          metadata: { from: existing.status, to: parsed.status },
+        },
+      });
+    }
+
+    if (hasPriorityChange && parsed.priority) {
+      await tx.ticketActivity.create({
+        data: {
+          ticketId: updated.id,
+          actorId: membership.userId,
+          type: 'PRIORITY_CHANGED',
+          metadata: { from: existing.priority, to: parsed.priority },
+        },
+      });
+    }
+
+    return updated as TicketWithCreator;
+  });
 }
 
 export async function closeTicket(id: string): Promise<TicketWithCreator> {
@@ -253,19 +303,40 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
     throw new TicketNotFoundError();
   }
 
+  if (existing.status === 'closed') {
+    return prisma.ticket
+      .update({
+        where: { id },
+        data: { status: 'closed' },
+        include: {
+          createdBy: true,
+        },
+      })
+      .then((item) => item as TicketWithCreator);
+  }
+
   assertTransitionAllowed(existing.status, 'closed');
 
-  return prisma.ticket
-    .update({
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.ticket.update({
       where: { id },
-      data: {
-        status: 'closed',
-      },
+      data: { status: 'closed' },
       include: {
         createdBy: true,
       },
-    })
-    .then((item) => item as TicketWithCreator);
+    });
+
+    await tx.ticketActivity.create({
+      data: {
+        ticketId: updated.id,
+        actorId: membership.userId,
+        type: 'STATUS_CHANGED',
+        metadata: { from: existing.status, to: 'closed' },
+      },
+    });
+
+    return updated as TicketWithCreator;
+  });
 }
 
 export async function assignTicket(id: string, input: AssignTicketInput): Promise<TicketWithCreator> {
@@ -279,6 +350,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
     },
     select: {
       id: true,
+      assignedToId: true,
     },
   });
 
@@ -300,18 +372,34 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
     throw new AssigneeNotInWorkspaceError();
   }
 
-  return prisma.ticket.update({
-    where: {
-      id,
-    },
-    data: {
-      assignedToId: parsed.assigneeId,
-    },
-    include: {
-      createdBy: true,
-      assignedTo: true,
-    },
-  }) as Promise<TicketWithCreator>;
+  if (existing.assignedToId === parsed.assigneeId) {
+    return prisma.ticket
+      .update({
+        where: { id },
+        data: { assignedToId: parsed.assigneeId },
+        include: { createdBy: true, assignedTo: true },
+      })
+      .then((item) => item as TicketWithCreator);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.ticket.update({
+      where: { id },
+      data: { assignedToId: parsed.assigneeId },
+      include: { createdBy: true, assignedTo: true },
+    });
+
+    await tx.ticketActivity.create({
+      data: {
+        ticketId: updated.id,
+        actorId: membership.userId,
+        type: 'TICKET_ASSIGNED',
+        metadata: { from: existing.assignedToId, to: parsed.assigneeId },
+      },
+    });
+
+    return updated as TicketWithCreator;
+  });
 }
 
 export async function unassignTicket(id: string): Promise<TicketWithCreator> {
@@ -324,6 +412,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
     },
     select: {
       id: true,
+      assignedToId: true,
     },
   });
 
@@ -331,16 +420,32 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
     throw new TicketNotFoundError();
   }
 
-  return prisma.ticket.update({
-    where: {
-      id,
-    },
-    data: {
-      assignedToId: null,
-    },
-    include: {
-      createdBy: true,
-      assignedTo: true,
-    },
-  }) as Promise<TicketWithCreator>;
+  if (existing.assignedToId === null) {
+    return prisma.ticket
+      .update({
+        where: { id },
+        data: { assignedToId: null },
+        include: { createdBy: true, assignedTo: true },
+      })
+      .then((item) => item as TicketWithCreator);
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.ticket.update({
+      where: { id },
+      data: { assignedToId: null },
+      include: { createdBy: true, assignedTo: true },
+    });
+
+    await tx.ticketActivity.create({
+      data: {
+        ticketId: updated.id,
+        actorId: membership.userId,
+        type: 'TICKET_UNASSIGNED',
+        metadata: { from: existing.assignedToId, to: null },
+      },
+    });
+
+    return updated as TicketWithCreator;
+  });
 }

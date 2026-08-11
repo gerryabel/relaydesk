@@ -22,6 +22,7 @@ model User {
   createdTickets  Ticket[]     @relation("TicketCreator")
   assignedTickets Ticket[]     @relation("TicketAssignee")
   createdMessages Message[]    @relation("MessageCreator")
+  activities      TicketActivity[] @relation("TicketActivityActor")
 }
 
 model Account {
@@ -91,6 +92,29 @@ enum TicketPriority {
   urgent
 }
 
+enum TicketActivityType {
+  TICKET_CREATED
+  TICKET_ASSIGNED
+  TICKET_UNASSIGNED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+}
+
+model TicketActivity {
+  id        String             @id @default(cuid())
+  ticketId  String
+  actorId   String?
+  type      TicketActivityType
+  metadata  Json?
+  createdAt DateTime           @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actor  User?  @relation("TicketActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@index([createdAt])
+}
+
 model Workspace {
   id        String   @id @default(cuid())
   name      String
@@ -136,6 +160,7 @@ model Ticket {
   createdBy User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
   assignedTo User?    @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   messages  Message[]
+  activities TicketActivity[]
 
   @@index([workspaceId])
   @@index([createdById])

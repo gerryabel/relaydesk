@@ -4,9 +4,11 @@ import { getMessages } from '@/lib/messages/server';
 import type { MessageWithCreator } from '@/lib/messages/server';
 import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
 import { getWorkspaceMembers } from '@/lib/workspace/server';
+import { getTicketActivities } from '@/lib/tickets/activity';
 import AssignTicketForm from '@/components/tickets/assign-ticket-form';
 import CreateMessageForm from '@/components/tickets/create-message-form';
 import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
+import ActivityTimeline from '@/components/tickets/activity-timeline';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -78,6 +80,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   const resolved = await params;
   let ticket;
   let messages: MessageWithCreator[] = [];
+  let activities: Awaited<ReturnType<typeof getTicketActivities>> = [];
 
   try {
     ticket = await getTicketById(resolved.id);
@@ -96,6 +99,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
     }
     throw error;
   }
+
+  try {
+    activities = await getTicketActivities(resolved.id);
+  } catch (error) {
+    if (error instanceof TicketNotFoundError) {
+      throw notFound();
+    }
+    console.error('Failed to load ticket activities', error);
+  }
+
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
@@ -233,6 +246,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           <div id="message-form" className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
             <CreateMessageForm ticketId={ticket.id} />
           </div>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Activity Timeline</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Riwayat perubahan penting pada tiket ini.
+            </p>
+          </header>
+          <ActivityTimeline activities={activities} />
         </section>
       </div>
     </div>
