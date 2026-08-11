@@ -66,7 +66,7 @@ API contract tetap sama. Perubahan hanya pada perilaku internal `getTickets` ket
   * Search dengan pagination.
   * Listing tanpa search tetap berperilaku sama.
 * Mempertahankan existing regression test tanpa menghapus coverage.
-* Semua test tetap lulus: `npm run test` menghasilkan 156 passed.
+* Semua test tetap lulus: `npm run test` menghasilkan 157 passed.
 
 ## Performance Consideration
 
