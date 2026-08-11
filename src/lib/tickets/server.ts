@@ -113,6 +113,8 @@ function buildTicketWhere(options: {
             OR: [
               { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
               { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+              { createdBy: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
+              { assignedTo: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
             ],
           }
         : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }

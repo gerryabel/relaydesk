@@ -71,7 +71,7 @@ export default function TicketFilterControls({ controlsClassName }: TicketFilter
           <span className="text-neutral-600 dark:text-neutral-300">Pencarian</span>
           <input
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
-            placeholder="Cari judul tiket..."
+            placeholder="Cari tiket..."
             defaultValue={search}
             onChange={(event) => {
               const query = buildQueryString(searchParams, event.target.value, status, priority);

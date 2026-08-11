@@ -96,7 +96,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
   const limit = parseLimit(resolved);
   const resolvedSearchParams = buildResolvedSearchParams(resolved);
 
-  const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search, page, limit });
+  const result = await getTickets({ status: filters.status, priority: filters.priority, search: filters.search ? { q: filters.search } : undefined, page, limit });
 
   const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority);
 
