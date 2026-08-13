@@ -25,6 +25,12 @@ describe('create customer validation', () => {
     });
   });
 
+  it('rejects invalid email format', () => {
+    expect(() => createCustomerSchema.parse({ name: 'Customer', email: 'bad-email' })).toThrow('Format email tidak valid');
+    expect(() => createCustomerSchema.parse({ name: 'Customer', email: 'missing@' })).toThrow('Format email tidak valid');
+    expect(() => createCustomerSchema.parse({ name: 'Customer', email: '@example.com' })).toThrow('Format email tidak valid');
+  });
+
   it('normalizes blank optional fields to null', () => {
     const parsed = createCustomerSchema.parse({ name: 'Customer', email: '   ', phone: '', notes: '   ' });
 

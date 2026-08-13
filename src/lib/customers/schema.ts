@@ -14,6 +14,9 @@ export const customerEmailSchema = z
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     return trimmed ? trimmed : null;
+  })
+  .refine((value) => value === null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), {
+    message: 'Format email tidak valid',
   });
 
 export const customerPhoneSchema = z
