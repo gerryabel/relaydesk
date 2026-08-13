@@ -123,6 +123,7 @@ model Workspace {
 
   members Membership[]
   tickets Ticket[]
+  customers Customer[]
 }
 
 model Membership {
@@ -140,9 +141,28 @@ model Membership {
   @@index([workspaceId])
 }
 
+model Customer {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String?
+  phone       String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets     Ticket[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, email])
+  @@unique([workspaceId, email])
+}
+
 model Ticket {
   id                  String         @id @default(cuid())
   workspaceId         String
+  customerId          String?
   createdById         String?
   assignedToId        String?
   title               String
@@ -156,15 +176,17 @@ model Ticket {
   firstResponseAt     DateTime?
   resolvedAt          DateTime?
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdBy User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  assignedTo User?    @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  messages  Message[]
-  activities TicketActivity[]
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdBy   User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo  User?     @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages    Message[]
+  activities  TicketActivity[]
 
   @@index([workspaceId])
   @@index([createdById])
   @@index([assignedToId])
+  @@index([customerId])
 }
 
 model Message {
