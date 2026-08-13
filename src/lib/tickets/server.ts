@@ -301,14 +301,20 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     }
 
     if (hasCustomerChange) {
+      const activityType = updated.customerId === null ? 'CUSTOMER_UNLINKED' : 'CUSTOMER_LINKED';
+      const activityMetadata: Record<string, string | null> =
+        updated.customerId === null
+          ? { from: existing.customerId, to: null }
+          : existing.customerId === null
+            ? { from: null, to: updated.customerId }
+            : { from: existing.customerId, to: updated.customerId };
+
       await tx.ticketActivity.create({
         data: {
           ticketId: updated.id,
           actorId: membership.userId,
-          type: 'CUSTOMER_LINKED',
-          metadata: {
-            customerId: updated.customerId,
-          },
+          type: activityType,
+          metadata: activityMetadata,
         },
       });
     }
