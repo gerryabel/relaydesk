@@ -201,6 +201,23 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
           </div>
         </section>
 
+        <section className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+          <h2 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">Customer</h2>
+          {ticket.customer ? (
+            <div className="mt-3 flex flex-col gap-1">
+              <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50">{ticket.customer.name}</p>
+              {ticket.customer.email ? (
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">{ticket.customer.email}</p>
+              ) : null}
+              {ticket.customer.phone ? (
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">{ticket.customer.phone}</p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">No customer linked to this ticket.</p>
+          )}
+        </section>
+
         <section className="flex flex-col gap-3">
           <header className="flex flex-col gap-1">
             <h2 className="text-xl font-semibold">Assignment</h2>

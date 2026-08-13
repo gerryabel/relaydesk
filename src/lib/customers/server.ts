@@ -9,6 +9,13 @@ export class CustomerNotFoundError extends Error {
   }
 }
 
+export class CustomerNotInWorkspaceError extends Error {
+  constructor(message = 'Customer bukan milik workspace ini.') {
+    super(message);
+    this.name = 'CustomerNotInWorkspaceError';
+  }
+}
+
 export type CustomerWithTickets = {
   id: string;
   workspaceId: string;
@@ -89,6 +96,49 @@ export async function getCustomerById(id: string): Promise<CustomerWithTickets> 
   return customer;
 }
 
+export async function getCustomerTickets(customerId: string) {
+  const membership = await getCurrentMembership();
+
+  const customer = await prisma.customer.findFirst({
+    where: {
+      id: customerId,
+      workspaceId: membership.workspaceId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!customer) {
+    throw new CustomerNotFoundError();
+  }
+
+  return prisma.ticket.findMany({
+    where: {
+      customerId: customer.id,
+    },
+    include: {
+      createdBy: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      assignedTo: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: {
+      updatedAt: 'desc',
+    },
+  });
+}
+
 export async function updateCustomer(id: string, input: UpdateCustomerInput): Promise<CustomerWithTickets> {
   const parsed = updateCustomerSchema.parse(input);
   const membership = await getCurrentMembership();
@@ -125,4 +175,22 @@ export async function updateCustomer(id: string, input: UpdateCustomerInput): Pr
       },
     },
   });
+}
+
+export async function assertCustomerInWorkspace(customerId: string, workspaceId: string) {
+  const customer = await prisma.customer.findFirst({
+    where: {
+      id: customerId,
+      workspaceId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!customer) {
+    throw new CustomerNotInWorkspaceError();
+  }
+
+  return customer;
 }

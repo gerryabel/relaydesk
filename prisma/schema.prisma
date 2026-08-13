@@ -98,6 +98,7 @@ enum TicketActivityType {
   TICKET_UNASSIGNED
   STATUS_CHANGED
   PRIORITY_CHANGED
+  CUSTOMER_LINKED
 }
 
 model TicketActivity {

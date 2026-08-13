@@ -8,6 +8,7 @@ import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/ti
 import { assertTransitionAllowed } from '@/lib/tickets/workflow';
 import { calculateResponseDeadline, calculateResolutionDeadline } from '@/lib/tickets/sla';
 import type { Prisma } from '@/generated/prisma';
+import { assertCustomerInWorkspace, CustomerNotInWorkspaceError } from '@/lib/customers/server';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -23,9 +24,12 @@ export class AssigneeNotInWorkspaceError extends Error {
   }
 }
 
+export { CustomerNotInWorkspaceError };
+
 export type TicketWithCreator = {
   id: string;
   workspaceId: string;
+  customerId: string | null;
   createdById: string | null;
   title: string;
   description: string | null;
@@ -54,6 +58,12 @@ export type TicketWithCreator = {
     image: string | null;
     createdAt: Date;
     updatedAt: Date;
+  } | null;
+  customer?: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
   } | null;
 };
 
@@ -198,6 +208,7 @@ export async function getTicketById(id: string): Promise<TicketWithCreator> {
     include: {
       createdBy: true,
       assignedTo: true,
+      customer: true,
     },
   });
 
@@ -222,11 +233,18 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
       status: true,
       priority: true,
       resolvedAt: true,
+      customerId: true,
     },
   });
 
   if (!existing) {
     throw new TicketNotFoundError();
+  }
+
+  if (parsed.customerId !== undefined && parsed.customerId !== existing.customerId) {
+    if (parsed.customerId !== null) {
+      await assertCustomerInWorkspace(parsed.customerId, membership.workspaceId);
+    }
   }
 
   const data: Prisma.TicketUpdateInput = { ...parsed };
@@ -241,13 +259,14 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
 
   const hasStatusChange = parsed.status !== undefined && parsed.status !== existing.status;
   const hasPriorityChange = parsed.priority !== undefined && parsed.priority !== existing.priority;
+  const hasCustomerChange = parsed.customerId !== undefined && parsed.customerId !== existing.customerId;
 
-  if (!hasStatusChange && !hasPriorityChange) {
+  if (!hasStatusChange && !hasPriorityChange && !hasCustomerChange) {
     return prisma.ticket
       .update({
         where: { id },
         data,
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -256,7 +275,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     const updated = await tx.ticket.update({
       where: { id },
       data,
-      include: { createdBy: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     if (hasStatusChange && parsed.status) {
@@ -277,6 +296,19 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
           actorId: membership.userId,
           type: 'PRIORITY_CHANGED',
           metadata: { from: existing.priority, to: parsed.priority },
+        },
+      });
+    }
+
+    if (hasCustomerChange) {
+      await tx.ticketActivity.create({
+        data: {
+          ticketId: updated.id,
+          actorId: membership.userId,
+          type: 'CUSTOMER_LINKED',
+          metadata: {
+            customerId: updated.customerId,
+          },
         },
       });
     }
@@ -310,6 +342,8 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
         data: { status: 'closed' },
         include: {
           createdBy: true,
+          assignedTo: true,
+          customer: true,
         },
       })
       .then((item) => item as TicketWithCreator);
@@ -323,6 +357,8 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
       data: { status: 'closed' },
       include: {
         createdBy: true,
+        assignedTo: true,
+        customer: true,
       },
     });
 
@@ -377,7 +413,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
       .update({
         where: { id },
         data: { assignedToId: parsed.assigneeId },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -386,7 +422,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
     const updated = await tx.ticket.update({
       where: { id },
       data: { assignedToId: parsed.assigneeId },
-      include: { createdBy: true, assignedTo: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     await tx.ticketActivity.create({
@@ -425,7 +461,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
       .update({
         where: { id },
         data: { assignedToId: null },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -434,7 +470,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
     const updated = await tx.ticket.update({
       where: { id },
       data: { assignedToId: null },
-      include: { createdBy: true, assignedTo: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     await tx.ticketActivity.create({

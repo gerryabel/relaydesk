@@ -33,6 +33,7 @@ export const updateTicketSchema = z.object({
     }),
   status: ticketStatusSchema.optional(),
   priority: ticketPrioritySchema.optional(),
+  customerId: z.string().trim().min(1, 'Customer ID wajib diisi').nullable().optional(),
 });
 
 export type CreateTicketInput = z.infer<typeof createTicketSchema>;
