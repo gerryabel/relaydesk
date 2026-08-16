@@ -116,6 +116,7 @@ type TicketGetOptions = {
   sort?: TicketSortInput | unknown;
   page?: number;
   limit?: number;
+  tagIds?: string[];
 };
 
 function buildTicketWhere(options: {
@@ -125,27 +126,51 @@ function buildTicketWhere(options: {
   assignee?: AssigneeFilter;
   query?: string;
   useOrSearch?: boolean;
+  tagIds?: string[];
 }): Prisma.TicketWhereInput {
-  const { membership, status, priority, assignee, query, useOrSearch } = options;
+  const { membership, status, priority, assignee, query, useOrSearch, tagIds } = options;
+  const normalizedTagIds = tagIds
+    ?.map((tagId) => tagId.trim())
+    .filter((tagId) => Boolean(tagId));
 
-  return {
+  const searchClause = query
+    ? useOrSearch
+      ? {
+          OR: [
+            { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+            { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+            { createdBy: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
+            { assignedTo: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
+          ],
+        }
+      : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
+    : undefined;
+
+  const tagClause =
+    normalizedTagIds && normalizedTagIds.length > 0
+      ? {
+          OR: normalizedTagIds.map((tagId) => ({
+            ticketTags: { some: { tagId } },
+          })),
+        }
+      : undefined;
+
+  const where: Prisma.TicketWhereInput = {
     workspaceId: membership.workspaceId,
     ...(status ? { status } : {}),
     ...(priority ? { priority } : {}),
     ...(assignee ? { assignedToId: assignee } : {}),
-    ...(query
-      ? useOrSearch
-        ? {
-            OR: [
-              { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
-              { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
-              { createdBy: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
-              { assignedTo: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
-            ],
-          }
-        : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
-      : {}),
   };
+
+  if (searchClause && tagClause) {
+    Object.assign(where, { AND: [searchClause, tagClause] });
+  } else if (searchClause) {
+    Object.assign(where, searchClause);
+  } else if (tagClause) {
+    Object.assign(where, tagClause);
+  }
+
+  return where;
 }
 
 export async function getTickets(options: TicketGetOptions = {}): Promise<TicketPaginationResult<TicketWithCreator>> {
@@ -169,6 +194,7 @@ export async function getTickets(options: TicketGetOptions = {}): Promise<Ticket
     assignee: options.assignee,
     query,
     useOrSearch,
+    tagIds: options.tagIds,
   });
 
   const total = await prisma.ticket.count({ where });

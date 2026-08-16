@@ -9,6 +9,8 @@ import AssignTicketForm from '@/components/tickets/assign-ticket-form';
 import CreateMessageForm from '@/components/tickets/create-message-form';
 import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
 import ActivityTimeline from '@/components/tickets/activity-timeline';
+import { getTicketTags, getTags } from '@/lib/tags/server';
+import TicketTagsManager from '@/components/tickets/ticket-tags-manager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -117,10 +119,15 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
 
   let members: Array<{ id: string; name: string; email: string }> = [];
+  let ticketTags: Array<{ id: string; name: string }> = [];
+  let availableTags: Array<{ id: string; name: string }> = [];
   try {
-    members = await getWorkspaceMembers();
+    const [workspaceMembers, tags] = await Promise.all([getWorkspaceMembers(), getTags()]);
+    members = workspaceMembers;
+    ticketTags = await getTicketTags(resolved.id);
+    availableTags = tags;
   } catch (error) {
-    console.error('Failed to load workspace members', error);
+    console.error('Failed to load tag context', error);
   }
 
   return (
@@ -226,6 +233,16 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
             </p>
           </header>
           <AssignTicketForm ticket={ticket} members={members} />
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Tags</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Kelola tag yang terpasang pada tiket ini.
+            </p>
+          </header>
+          <TicketTagsManager ticketId={ticket.id} initialTags={ticketTags} availableTags={availableTags} />
         </section>
 
         <section className="flex flex-col gap-3">
