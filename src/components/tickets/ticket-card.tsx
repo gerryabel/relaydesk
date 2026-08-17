@@ -32,15 +32,19 @@ const statusLabel: Record<TicketWithCreator['status'], string> = {
 };
 
 const slaStatusLabel: Record<string, string> = {
-  pending: 'Pending',
+  on_track: 'On Track',
+  at_risk: 'At Risk',
+  breached: 'Breached',
   completed: 'Completed',
-  overdue: 'Overdue',
+  not_applicable: 'Not Applicable',
 };
 
 const slaStatusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
-  pending: 'blue',
+  on_track: 'emerald',
+  at_risk: 'amber',
+  breached: 'red',
   completed: 'emerald',
-  overdue: 'red',
+  not_applicable: 'neutral',
 };
 
 export default function TicketCard({ ticket }: TicketCardProps) {

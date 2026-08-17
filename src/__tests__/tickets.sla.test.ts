@@ -187,6 +187,10 @@ describe('SLA overdue detection', () => {
   it('is not overdue when deadline is missing', () => {
     expect(isSlaOverdue(null, null, new Date('2025-01-01T13:00:00Z'))).toBe(false);
   });
+
+  it('is overdue at exact deadline without completion', () => {
+    expect(isSlaOverdue(deadline, null, deadline)).toBe(true);
+  });
 });
 
 describe('at risk threshold', () => {

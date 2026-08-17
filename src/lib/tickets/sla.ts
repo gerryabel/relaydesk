@@ -128,7 +128,7 @@ export function isSlaOverdue(deadline: Date | null, completedAt: Date | null, no
     return completedAt.getTime() > deadline.getTime();
   }
 
-  return now.getTime() > deadline.getTime();
+  return now.getTime() >= deadline.getTime();
 }
 
 export function getResponseSlaMonitoringStatus(
