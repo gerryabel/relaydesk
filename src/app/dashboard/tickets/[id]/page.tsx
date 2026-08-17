@@ -14,7 +14,7 @@ import TicketTagsManager from '@/components/tickets/ticket-tags-manager';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
-import { getResponseSlaStatus, getResolutionSlaStatus } from '@/lib/tickets/sla';
+import { getResponseSlaMonitoringStatus, getResolutionSlaMonitoringStatus } from '@/lib/tickets/sla';
 
 type TicketDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -40,20 +40,53 @@ const slaStatusLabel: Record<string, string> = {
   pending: 'Pending',
   completed: 'Completed',
   overdue: 'Overdue',
+  on_track: 'On Track',
+  at_risk: 'At Risk',
+  breached: 'Breached',
+  not_applicable: 'Not Applicable',
 };
 
 const slaStatusTone: Record<string, 'neutral' | 'blue' | 'amber' | 'emerald' | 'red'> = {
   pending: 'blue',
   completed: 'emerald',
   overdue: 'red',
+  on_track: 'emerald',
+  at_risk: 'amber',
+  breached: 'red',
+  not_applicable: 'neutral',
 };
 
-function formatDeadline(deadline: Date | null) {
+function formatSlaRemaining(deadline: Date | null, now: Date) {
   if (!deadline) {
-    return 'Not set';
+    return null;
   }
 
-  return new Date(deadline).toLocaleString('id-ID');
+  const remainingMs = deadline.getTime() - now.getTime();
+
+  if (remainingMs > 0) {
+    const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m remaining`;
+    }
+
+    return `${minutes}m remaining`;
+  }
+
+  if (remainingMs === 0) {
+    return 'At deadline';
+  }
+
+  const overdueMinutes = Math.ceil(Math.abs(remainingMs) / (1000 * 60));
+  const overdueHours = Math.floor(overdueMinutes / 60);
+  const overdueMins = overdueMinutes % 60;
+
+  if (overdueHours > 0) {
+    return `Overdue by ${overdueHours}h ${overdueMins}m`;
+  }
+
+  return `Overdue by ${overdueMins}m`;
 }
 
 function MessageItem({ message }: { message: MessageWithCreator }) {
@@ -115,8 +148,26 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   const createdAt = new Date(ticket.createdAt).toLocaleString('id-ID');
   const updatedAt = new Date(ticket.updatedAt).toLocaleString('id-ID');
   const now = new Date();
-  const responseStatus = getResponseSlaStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, now);
-  const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
+  const responseStatus = getResponseSlaMonitoringStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, ticket.createdAt, now);
+  const resolutionStatus = getResolutionSlaMonitoringStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, ticket.createdAt, now);
+  const responseRemaining = formatSlaRemaining(ticket.responseSlaDeadline, now);
+  const resolutionRemaining = formatSlaRemaining(ticket.resolutionSlaDeadline, now);
+
+  const responseSlaDescription = (() => {
+    if (responseStatus === 'completed') return 'Responded within SLA';
+    if (responseStatus === 'breached') return responseRemaining ?? 'Breached';
+    if (responseStatus === 'at_risk') return responseRemaining ?? 'At Risk';
+    if (responseStatus === 'on_track') return responseRemaining ?? 'On Track';
+    return 'No deadline set';
+  })();
+
+  const resolutionSlaDescription = (() => {
+    if (resolutionStatus === 'completed') return 'Resolved within SLA';
+    if (resolutionStatus === 'breached') return resolutionRemaining ?? 'Breached';
+    if (resolutionStatus === 'at_risk') return resolutionRemaining ?? 'At Risk';
+    if (resolutionStatus === 'on_track') return resolutionRemaining ?? 'On Track';
+    return 'No deadline set';
+  })();
 
   let members: Array<{ id: string; name: string; email: string }> = [];
   let ticketTags: Array<{ id: string; name: string }> = [];
@@ -177,32 +228,22 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
         <section className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="text-sm font-medium text-neutral-700 dark:text-neutral-200">SLA</h2>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
+            <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
               <p className="text-xs text-neutral-500 dark:text-neutral-400">Response SLA</p>
               <div className="mt-1 flex flex-col gap-1">
                 <div>
                   <Badge tone={slaStatusTone[responseStatus]}>{slaStatusLabel[responseStatus]}</Badge>
                 </div>
-                <p className="text-xs text-neutral-600 dark:text-neutral-300">
-                  Deadline: {formatDeadline(ticket.responseSlaDeadline)}
-                </p>
-                <p className="text-xs text-neutral-600 dark:text-neutral-300">
-                  First response: {ticket.firstResponseAt ? new Date(ticket.firstResponseAt).toLocaleString('id-ID') : 'Not yet'}
-                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">{responseSlaDescription}</p>
               </div>
             </div>
-            <div>
+            <div className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
               <p className="text-xs text-neutral-500 dark:text-neutral-400">Resolution SLA</p>
               <div className="mt-1 flex flex-col gap-1">
                 <div>
                   <Badge tone={slaStatusTone[resolutionStatus]}>{slaStatusLabel[resolutionStatus]}</Badge>
                 </div>
-                <p className="text-xs text-neutral-600 dark:text-neutral-300">
-                  Deadline: {formatDeadline(ticket.resolutionSlaDeadline)}
-                </p>
-                <p className="text-xs text-neutral-600 dark:text-neutral-300">
-                  Resolved at: {ticket.resolvedAt ? new Date(ticket.resolvedAt).toLocaleString('id-ID') : 'Not yet'}
-                </p>
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">{resolutionSlaDescription}</p>
               </div>
             </div>
           </div>

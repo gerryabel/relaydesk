@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { type TicketWithCreator } from '@/lib/tickets/server';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { getResponseSlaStatus, getResolutionSlaStatus } from '@/lib/tickets/sla';
+import { getResponseSlaMonitoringStatus, getResolutionSlaMonitoringStatus } from '@/lib/tickets/sla';
 
 type TicketCardProps = {
   ticket: TicketWithCreator;
@@ -47,8 +47,8 @@ export default function TicketCard({ ticket }: TicketCardProps) {
   const creator = ticket.createdBy?.name ?? 'Unknown';
   const createdDate = new Date(ticket.createdAt).toLocaleDateString('id-ID');
   const now = new Date();
-  const responseStatus = getResponseSlaStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, now);
-  const resolutionStatus = getResolutionSlaStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, now);
+  const responseStatus = getResponseSlaMonitoringStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, ticket.createdAt, now);
+  const resolutionStatus = getResolutionSlaMonitoringStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, ticket.createdAt, now);
 
   return (
     <Link href={`/dashboard/tickets/${ticket.id}`} className="block">
