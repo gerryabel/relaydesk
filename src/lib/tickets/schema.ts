@@ -70,4 +70,28 @@ export const unassignTicketSchema = z.object({});
 
 export type AssignTicketInput = z.infer<typeof assignTicketSchema>;
 export type UnassignTicketInput = z.infer<typeof unassignTicketSchema>;
-export type TicketFiltersInput = z.infer<typeof ticketFiltersSchema>;
+export type TicketAssigneeFilterInput = z.infer<typeof ticketAssigneeFilterSchema>;
+
+export const bulkActionSchema = z.object({
+  ticketIds: z.array(z.string().trim().min(1, 'Ticket ID tidak valid')).min(1, 'Pilih minimal satu tiket').max(100, 'Maksimal 100 tiket'),
+  action: z.enum(['assign', 'status', 'priority', 'add_tag', 'remove_tag']),
+  value: z.unknown(),
+});
+
+export type BulkActionInput = z.infer<typeof bulkActionSchema>;
+
+export const bulkAssignPayloadSchema = z.object({
+  assigneeId: z.string().trim().min(1, 'Assignee wajib diisi'),
+});
+
+export const bulkStatusPayloadSchema = z.object({
+  status: ticketStatusSchema,
+});
+
+export const bulkPriorityPayloadSchema = z.object({
+  priority: ticketPrioritySchema,
+});
+
+export const bulkTagPayloadSchema = z.object({
+  tagId: z.string().trim().min(1, 'Tag ID wajib diisi'),
+});

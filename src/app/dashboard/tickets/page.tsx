@@ -1,5 +1,5 @@
 import { getTickets } from '@/lib/tickets/server';
-import TicketCard from '@/components/tickets/ticket-card';
+import TicketSelectionList from '@/components/tickets/ticket-selection-list';
 import { EmptyState } from '@/components/ui/empty-state';
 import TicketFilterControls from '@/components/tickets/ticket-filters';
 import TicketSortControls from '@/components/tickets/ticket-sort-control';
@@ -129,7 +129,6 @@ export function buildPaginationQuery(resolved: Record<string, unknown>, page: nu
 
   return params.toString();
 }
-
 
 type FilteredTicketsPagePropsResolved = {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
@@ -270,52 +269,51 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
             }
           />
         ) : (
-          <>
-            <div className="grid grid-cols-1 gap-4">
-              {result.data.map((ticket) => (
-                <TicketCard key={ticket.id} ticket={ticket} />
-              ))}
-            </div>
-
-            <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
-              <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
-                Halaman {result.page} dari {result.totalPages} • {result.total} tiket
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {result.hasPreviousPage ? (
-                  <Link
-                    href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
-                  >
-                    Sebelumnya
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
-                  >
-                    Sebelumnya
-                  </span>
-                )}
-                {result.hasNextPage ? (
-                  <Link
-                    href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
-                  >
-                    Berikutnya
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
-                  >
-                    Berikutnya
-                  </span>
-                )}
-              </div>
-            </nav>
-          </>
+          <TicketSelectionList
+            tickets={result.data}
+            members={members}
+            tags={tags}
+            searchParams={resolvedSearchParams.toString()}
+          />
         )}
+
+        <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
+          <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
+            Halaman {result.page} dari {result.totalPages} • {result.total} tiket
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {result.hasPreviousPage ? (
+              <Link
+                href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+              >
+                Sebelumnya
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+              >
+                Sebelumnya
+              </span>
+            )}
+            {result.hasNextPage ? (
+              <Link
+                href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+              >
+                Berikutnya
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+              >
+                Berikutnya
+              </span>
+            )}
+          </div>
+        </nav>
       </div>
     </div>
   );
