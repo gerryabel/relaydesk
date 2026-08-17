@@ -62,6 +62,8 @@ function humanizeActivity(activity: TicketActivityWithActor): string {
 
       return `${actor} changed priority`;
     }
+    case 'INTERNAL_NOTE_CREATED':
+      return `${actor} added an internal note`;
     default:
       return `${actor} updated the ticket`;
   }

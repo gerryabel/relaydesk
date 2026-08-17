@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { notFound } from 'next/navigation';
-import { getTicketById, TicketNotFoundError, updateTicket } from '@/lib/tickets/server';
+import { getTicketById, TicketNotFoundError, updateTicket, CustomerNotInWorkspaceError } from '@/lib/tickets/server';
 import { InvalidTicketTransitionError } from '@/lib/tickets/workflow';
 import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
 
@@ -27,7 +27,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   try {
     const resolved = await params;
     const payload = await request.json();
-    const { title, description, priority, status } = payload ?? {};
+    const { title, description, priority, status, customerId } = payload ?? {};
 
     if (title !== undefined && typeof title !== 'string') {
       return NextResponse.json({ error: 'Invalid title' }, { status: 400 });
@@ -40,6 +40,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     if (status !== undefined && !['open', 'in_progress', 'waiting_customer', 'resolved', 'closed'].includes(status)) {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
+    }
+    if (customerId !== undefined && customerId !== null && typeof customerId !== 'string') {
+      return NextResponse.json({ error: 'Invalid customer' }, { status: 400 });
     }
 
     const trimmedTitle = title?.trim();
@@ -55,12 +58,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Description is too long' }, { status: 400 });
     }
 
-    const updated = await updateTicket(resolved.id, {
-      ...(trimmedTitle !== undefined ? { title: trimmedTitle } : {}),
-      description: description !== undefined ? description.trim() || null : undefined,
-      ...(priority !== undefined ? { priority } : {}),
-      ...(status !== undefined ? { status } : {}),
-    } as import('@/lib/tickets/schema').UpdateTicketInput);
+    const updatePayload: Record<string, unknown> = {};
+    if (trimmedTitle !== undefined) updatePayload.title = trimmedTitle;
+    if (description !== undefined) updatePayload.description = description.trim() || null;
+    if (priority !== undefined) updatePayload.priority = priority;
+    if (status !== undefined) updatePayload.status = status;
+    if (customerId !== undefined) updatePayload.customerId = customerId;
+
+    const updated = await updateTicket(resolved.id, updatePayload as import('@/lib/tickets/schema').UpdateTicketInput);
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -75,6 +80,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     if (error instanceof InvalidTicketTransitionError) {
       return NextResponse.json({ error: error.message ?? 'Invalid ticket transition' }, { status: 409 });
+    }
+    if (error instanceof CustomerNotInWorkspaceError) {
+      return NextResponse.json({ error: 'Customer is not in this workspace' }, { status: 400 });
     }
     return NextResponse.json({ error: 'Failed to update ticket' }, { status: 500 });
   }

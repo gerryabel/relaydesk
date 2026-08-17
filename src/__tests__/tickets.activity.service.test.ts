@@ -80,6 +80,11 @@ vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
 }));
 
+vi.mock('@/lib/notifications/server', () => ({
+  createTicketAssignedNotification: vi.fn().mockResolvedValue(undefined),
+  createTicketStatusChangedNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('ticket activity services', () => {
   beforeEach(() => {
     vi.mocked(getCurrentMembership).mockResolvedValue(fakeMembership as never);
@@ -117,6 +122,7 @@ describe('ticket activity services', () => {
       const txClient = {
         ticket: { update: vi.fn().mockResolvedValue({ ...fakeTicket, status: 'in_progress' } as never) },
         ticketActivity: { create: vi.fn().mockResolvedValue(fakeActivity as never) },
+        notification: { create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never) },
       } as unknown as Parameters<typeof worker>[0];
 
       return worker(txClient);
@@ -210,6 +216,7 @@ describe('ticket activity services', () => {
       const txClient = {
         ticket: { update: vi.fn().mockResolvedValue({ ...fakeTicket, assignedToId: 'user-456', assignedTo: fakeAssignee } as never) },
         ticketActivity: { create: vi.fn().mockResolvedValue(fakeActivity as never) },
+        notification: { create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never) },
       } as unknown as Parameters<typeof worker>[0];
 
       return worker(txClient);

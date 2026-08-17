@@ -21,6 +21,7 @@ const PRIORITY_OPTIONS = [
 export type TicketFilterControlsProps = {
   controlsClassName?: string;
   members?: Array<{ id: string; name: string; email: string }>;
+  tags?: Array<{ id: string; name: string }>;
 };
 
 function buildQueryString(
@@ -28,7 +29,8 @@ function buildQueryString(
   nextSearch: string,
   nextStatus: string,
   nextPriority: string,
-  nextAssignee: string
+  nextAssignee: string,
+  nextTagId: string
 ) {
   const params = new URLSearchParams(searchParams.toString());
 
@@ -56,10 +58,16 @@ function buildQueryString(
     params.set('assignee', nextAssignee);
   }
 
+  if (!nextTagId) {
+    params.delete('tagId');
+  } else {
+    params.set('tagId', nextTagId);
+  }
+
   return params.toString();
 }
 
-export default function TicketFilterControls({ controlsClassName, members }: TicketFilterControlsProps) {
+export default function TicketFilterControls({ controlsClassName, members, tags }: TicketFilterControlsProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -68,6 +76,7 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
   const status = searchParams.get('status') ?? '';
   const priority = searchParams.get('priority') ?? '';
   const assignee = searchParams.get('assignee') ?? '';
+  const tagId = searchParams.get('tagId') ?? '';
 
   return (
     <form
@@ -83,7 +92,7 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
             placeholder="Cari tiket..."
             defaultValue={search}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, event.target.value, status, priority, assignee);
+              const query = buildQueryString(searchParams, event.target.value, status, priority, assignee, tagId);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           />
@@ -95,7 +104,7 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={status}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, search, event.target.value, priority, assignee);
+              const query = buildQueryString(searchParams, search, event.target.value, priority, assignee, tagId);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           >
@@ -113,7 +122,7 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={priority}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, search, status, event.target.value, assignee);
+              const query = buildQueryString(searchParams, search, status, event.target.value, assignee, tagId);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           >
@@ -131,7 +140,7 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
             className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
             defaultValue={assignee}
             onChange={(event) => {
-              const query = buildQueryString(searchParams, search, status, priority, event.target.value);
+              const query = buildQueryString(searchParams, search, status, priority, event.target.value, tagId);
               router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
             }}
           >
@@ -143,6 +152,27 @@ export default function TicketFilterControls({ controlsClassName, members }: Tic
             ))}
           </select>
         </label>
+
+        {tags && tags.length > 0 ? (
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-neutral-600 dark:text-neutral-300">Tag</span>
+            <select
+              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 focus:border-neutral-900 focus:outline-none dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-50 dark:focus:border-neutral-100"
+              defaultValue={tagId}
+              onChange={(event) => {
+                const query = buildQueryString(searchParams, search, status, priority, assignee, event.target.value);
+                router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+              }}
+            >
+              <option value="">Semua tag</option>
+              {tags.map((tag) => (
+                <option key={tag.id} value={tag.id}>
+                  {tag.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
     </form>
   );

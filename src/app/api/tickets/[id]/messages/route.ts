@@ -32,6 +32,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
             updatedAt: true,
           },
         },
+        attachments: {
+          select: {
+            id: true,
+            originalFilename: true,
+            mimeType: true,
+            sizeBytes: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: { createdAt: 'asc' },
     });
@@ -85,6 +94,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             image: true,
             createdAt: true,
             updatedAt: true,
+          },
+        },
+        attachments: {
+          select: {
+            id: true,
+            originalFilename: true,
+            mimeType: true,
+            sizeBytes: true,
+            createdAt: true,
           },
         },
       },

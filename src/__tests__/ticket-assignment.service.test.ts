@@ -60,6 +60,11 @@ vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
 }));
 
+vi.mock('@/lib/notifications/server', () => ({
+  createTicketAssignedNotification: vi.fn().mockResolvedValue(undefined),
+  createTicketStatusChangedNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('ticket assignment services', () => {
   beforeEach(() => {
     vi.mocked(getCurrentMembership).mockResolvedValue(fakeMembership as never);
@@ -83,6 +88,25 @@ describe('ticket assignment services', () => {
         },
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+        notification: {
+          create: vi.fn().mockResolvedValue({
+            id: 'notification-1',
+            userId: 'user-456',
+            workspaceId: 'workspace-123',
+            ticketId: 'ticket-1',
+            type: 'TICKET_ASSIGNED',
+            title: 'Ticket assigned to you',
+            body: 'Ticket #ticket-1 was assigned to you.',
+            readAt: null,
+            createdAt: new Date('2025-01-01T00:00:00Z'),
+            updatedAt: new Date('2025-01-01T00:00:00Z'),
+            ticket: {
+              id: 'ticket-1',
+              title: 'Judul Tiket',
+              status: 'open',
+            },
+          } as never),
         },
       } as never;
 
@@ -206,6 +230,9 @@ describe('ticket assignment services', () => {
         },
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+        notification: {
+          create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never),
         },
       } as never;
 

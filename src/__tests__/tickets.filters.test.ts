@@ -458,6 +458,304 @@ describe('ticket filters', () => {
   });
 });
 
+describe('ticket tag filters', () => {
+  beforeEach(() => {
+    vi.mocked(getCurrentMembership).mockResolvedValue(fakeMembership as never);
+  });
+
+  afterEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('getTickets leaves where clause unchanged when no tag filter is provided', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({});
+
+      expect(countSpy).toHaveBeenCalledWith({ where: { workspaceId: 'workspace-123' } });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: { workspaceId: 'workspace-123' },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets filters by one tag', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ tagIds: ['tag-1'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets filters multiple tags with OR semantics', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ tagIds: ['tag-1', 'tag-2'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { ticketTags: { some: { tagId: 'tag-1' } } },
+            { ticketTags: { some: { tagId: 'tag-2' } } },
+          ],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [
+            { ticketTags: { some: { tagId: 'tag-1' } } },
+            { ticketTags: { some: { tagId: 'tag-2' } } },
+          ],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines tag filter with status using AND semantics', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ status: 'open', tagIds: ['tag-1'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          status: 'open',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines tag filter with priority using AND semantics', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ priority: 'high', tagIds: ['tag-1'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          priority: 'high',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          priority: 'high',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines search and tag filters with AND semantics', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ search: 'Judul Tiket', tagIds: ['tag-1'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          AND: [
+            { title: { contains: 'Judul Tiket', mode: 'insensitive' } },
+            { OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }] },
+          ],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          AND: [
+            { title: { contains: 'Judul Tiket', mode: 'insensitive' } },
+            { OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }] },
+          ],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets combines useOrSearch and multiple tags with AND between groups', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(1 as never);
+
+    try {
+      await getTickets({ search: { q: 'Judul Tiket' }, tagIds: ['tag-1', 'tag-2'] });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          AND: [
+            {
+              OR: [
+                { title: { contains: 'Judul Tiket', mode: 'insensitive' } },
+                { description: { contains: 'Judul Tiket', mode: 'insensitive' } },
+                { createdBy: { name: { contains: 'Judul Tiket', mode: 'insensitive' } } },
+                { assignedTo: { name: { contains: 'Judul Tiket', mode: 'insensitive' } } },
+              ],
+            },
+            {
+              OR: [
+                { ticketTags: { some: { tagId: 'tag-1' } } },
+                { ticketTags: { some: { tagId: 'tag-2' } } },
+              ],
+            },
+          ],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          AND: [
+            {
+              OR: [
+                { title: { contains: 'Judul Tiket', mode: 'insensitive' } },
+                { description: { contains: 'Judul Tiket', mode: 'insensitive' } },
+                { createdBy: { name: { contains: 'Judul Tiket', mode: 'insensitive' } } },
+                { assignedTo: { name: { contains: 'Judul Tiket', mode: 'insensitive' } } },
+              ],
+            },
+            {
+              OR: [
+                { ticketTags: { some: { tagId: 'tag-1' } } },
+                { ticketTags: { some: { tagId: 'tag-2' } } },
+              ],
+            },
+          ],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 0,
+        take: 20,
+      });
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets preserves pagination with tag filters', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([fakeTicket] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(25 as never);
+
+    try {
+      const result = await getTickets({ tagIds: ['tag-1'], page: 2, limit: 10 });
+
+      expect(countSpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+      });
+      expect(findManySpy).toHaveBeenCalledWith({
+        where: {
+          workspaceId: 'workspace-123',
+          OR: [{ ticketTags: { some: { tagId: 'tag-1' } } }],
+        },
+        include: { createdBy: true },
+        orderBy: { createdAt: 'desc' },
+        skip: 10,
+        take: 10,
+      });
+      expect(result.page).toBe(2);
+      expect(result.limit).toBe(10);
+      expect(result.total).toBe(25);
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+
+  it('getTickets returns empty data when no tickets match the tag filter', async () => {
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([] as never);
+    const countSpy = vi.spyOn(sharedPrisma.ticket, 'count').mockResolvedValue(0 as never);
+
+    try {
+      const result = await getTickets({ tagIds: ['tag-1'] });
+
+      expect(result.data).toHaveLength(0);
+      expect(result.total).toBe(0);
+    } finally {
+      countSpy.mockRestore();
+      findManySpy.mockRestore();
+    }
+  });
+});
+
 describe('ticket sort', () => {
   beforeEach(() => {
     vi.mocked(getCurrentMembership).mockResolvedValue(fakeMembership as never);

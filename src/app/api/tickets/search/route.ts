@@ -7,6 +7,10 @@ import { normalizeTicketPagination } from '@/lib/tickets/pagination';
 import { ticketStatusSchema, ticketPrioritySchema, ticketAssigneeFilterSchema } from '@/lib/tickets/schema';
 import type { TicketPaginationResult } from '@/lib/tickets/pagination';
 
+const ticketTagFilterSchema = z.object({
+  tagId: z.string().trim().min(1).max(64).optional(),
+});
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -45,6 +49,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Invalid assignee' }, { status: 400 });
     }
 
+    const tagResult = ticketTagFilterSchema.safeParse({ tagId: searchParams.get('tagId') });
+    if (searchParams.has('tagId') && !tagResult.success) {
+      return NextResponse.json({ error: 'Invalid tagId' }, { status: 400 });
+    }
+
     const pagination = normalizeTicketPagination({
       page: rawPage ? Number(rawPage) : undefined,
       limit: rawLimit ? Number(rawLimit) : undefined,
@@ -54,6 +63,7 @@ export async function GET(request: Request) {
       ...(status ? { status } : {}),
       ...(priority ? { priority } : {}),
       ...(assigneeResult.success && assigneeResult.data.assignee ? { assignee: assigneeResult.data.assignee } : {}),
+      ...(tagResult.success && tagResult.data.tagId ? { tagIds: [tagResult.data.tagId] } : {}),
       search: normalized.q ? { q: normalized.q } : undefined,
       sort: normalized.sort,
       page: pagination.page,

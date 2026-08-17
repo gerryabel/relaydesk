@@ -7,6 +7,7 @@ import SignOutButton from '@/components/auth/sign-out-button';
 const navigation = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/dashboard/tickets', label: 'Tickets' },
+  { href: '/dashboard/tags', label: 'Tags' },
   { href: '/dashboard/members', label: 'Members' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];

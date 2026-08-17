@@ -149,7 +149,7 @@ describe('ticket services', () => {
       await expect(getTicketById('missing')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'missing', workspaceId: 'workspace-123' },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -164,9 +164,13 @@ describe('ticket services', () => {
       const txClient = {
         ticket: {
           update: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Baru', status: 'in_progress' } as never),
+          findFirst: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Tiket', status: 'open' } as never),
         },
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+        notification: {
+          create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never),
         },
       } as never;
 
@@ -182,7 +186,7 @@ describe('ticket services', () => {
 
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-1', workspaceId: 'workspace-123' },
-        select: { id: true, status: true, priority: true, resolvedAt: true },
+        select: { id: true, status: true, priority: true, resolvedAt: true, customerId: true },
       });
       expect(transactionSpy).toHaveBeenCalledTimes(1);
       expect(ticket.id).toBe('ticket-1');
@@ -233,7 +237,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -584,7 +588,7 @@ describe('ticket services', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       });
     } finally {
       findFirstSpy.mockRestore();
