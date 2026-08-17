@@ -21,12 +21,14 @@ const membership = {
   },
 };
 
+const createdAt = new Date('2025-01-01T00:00:00Z');
+
 const buildTicket = (overrides: Record<string, unknown> = {}) => ({
   id: overrides.id ?? 'ticket-1',
   workspaceId: 'workspace-123',
   title: '',
   description: null,
-  createdAt: new Date('2025-01-01T00:00:00Z'),
+  createdAt,
   updatedAt: new Date('2025-01-01T00:00:00Z'),
   createdById: 'user-123',
   createdBy: null,
@@ -41,10 +43,13 @@ const buildTicket = (overrides: Record<string, unknown> = {}) => ({
 
 describe('queue domain', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(createdAt);
     vi.mocked(getCurrentMembership).mockResolvedValue(membership as never);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -195,5 +200,108 @@ describe('queue domain', () => {
       'ticket-39',
       'ticket-40',
     ]);
+  });
+
+  it('SLA At Risk includes response at_risk tickets', async () => {
+    vi.setSystemTime(new Date('2025-01-01T06:24:00Z'));
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({
+        id: 'response-at-risk',
+        status: 'open',
+        priority: 'medium',
+        responseSlaDeadline: new Date('2025-01-01T08:00:00Z'),
+      }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data.map((ticket) => ticket.id)).toEqual(['response-at-risk']);
+    expect(result.total).toBe(1);
+    expect(findManySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ assignedToId: 'user-123', workspaceId: 'workspace-123' }),
+      }),
+    );
+  });
+
+  it('SLA At Risk includes resolution at_risk tickets', async () => {
+    vi.setSystemTime(new Date('2025-01-03T09:36:00Z'));
+    const findManySpy = vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({
+        id: 'resolution-at-risk',
+        status: 'open',
+        priority: 'medium',
+        resolutionSlaDeadline: new Date('2025-01-04T00:00:00Z'),
+      }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data.map((ticket) => ticket.id)).toEqual(['resolution-at-risk']);
+    expect(result.total).toBe(1);
+    expect(findManySpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ assignedToId: 'user-123', workspaceId: 'workspace-123' }),
+      }),
+    );
+  });
+
+  it('SLA At Risk excludes tickets that are neither at_risk', async () => {
+    vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({ id: 'normal-1', status: 'open', priority: 'medium' }),
+      buildTicket({ id: 'normal-2', status: 'in_progress', priority: 'medium' }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('SLA At Risk excludes completed SLA', async () => {
+    vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({
+        id: 'completed-response',
+        status: 'open',
+        priority: 'medium',
+        responseSlaDeadline: new Date('2025-01-01T08:00:00Z'),
+        firstResponseAt: new Date('2025-01-01T07:00:00Z'),
+      }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('SLA At Risk excludes breached SLA', async () => {
+    vi.setSystemTime(new Date('2025-01-01T10:00:00Z'));
+    vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({
+        id: 'breached-response',
+        status: 'open',
+        priority: 'medium',
+        responseSlaDeadline: new Date('2025-01-01T08:00:00Z'),
+      }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data).toHaveLength(0);
+    expect(result.total).toBe(0);
+  });
+
+  it('SLA At Risk includes response completed but resolution at_risk', async () => {
+    vi.setSystemTime(new Date('2025-01-03T09:36:00Z'));
+    vi.spyOn(sharedPrisma.ticket, 'findMany').mockResolvedValue([
+      buildTicket({
+        id: 'mixed',
+        status: 'open',
+        priority: 'medium',
+        responseSlaDeadline: new Date('2025-01-01T08:00:00Z'),
+        firstResponseAt: new Date('2025-01-01T07:00:00Z'),
+        resolutionSlaDeadline: new Date('2025-01-04T00:00:00Z'),
+      }),
+    ] as never);
+
+    const result = await getMyQueueTickets({ view: 'sla-risk' });
+    expect(result.data.map((ticket) => ticket.id)).toEqual(['mixed']);
+    expect(result.total).toBe(1);
   });
 });
