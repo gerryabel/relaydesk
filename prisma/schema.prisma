@@ -22,7 +22,9 @@ model User {
   createdTickets  Ticket[]     @relation("TicketCreator")
   assignedTickets Ticket[]     @relation("TicketAssignee")
   createdMessages Message[]    @relation("MessageCreator")
+  internalNotes   InternalNote[] @relation("InternalNoteAuthor")
   activities      TicketActivity[] @relation("TicketActivityActor")
+  notifications   Notification[]
 }
 
 model Account {
@@ -98,6 +100,18 @@ enum TicketActivityType {
   TICKET_UNASSIGNED
   STATUS_CHANGED
   PRIORITY_CHANGED
+  CUSTOMER_LINKED
+  CUSTOMER_UNLINKED
+  TAG_ADDED
+  TAG_REMOVED
+  INTERNAL_NOTE_CREATED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
+}
+
+enum NotificationType {
+  TICKET_ASSIGNED
+  TICKET_STATUS_CHANGED
 }
 
 model TicketActivity {
@@ -123,6 +137,9 @@ model Workspace {
 
   members Membership[]
   tickets Ticket[]
+  customers Customer[]
+  tags     Tag[]
+  notifications Notification[]
 }
 
 model Membership {
@@ -140,9 +157,28 @@ model Membership {
   @@index([workspaceId])
 }
 
+model Customer {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String?
+  phone       String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets     Ticket[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, email])
+  @@unique([workspaceId, email])
+}
+
 model Ticket {
   id                  String         @id @default(cuid())
   workspaceId         String
+  customerId          String?
   createdById         String?
   assignedToId        String?
   title               String
@@ -156,15 +192,20 @@ model Ticket {
   firstResponseAt     DateTime?
   resolvedAt          DateTime?
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdBy User?     @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  assignedTo User?    @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
-  messages  Message[]
-  activities TicketActivity[]
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer    Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  createdBy   User?       @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  assignedTo  User?       @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages    Message[]
+  internalNotes InternalNote[]
+  activities  TicketActivity[]
+  ticketTags  TicketTag[]
+  notifications Notification[]
 
   @@index([workspaceId])
   @@index([createdById])
   @@index([assignedToId])
+  @@index([customerId])
 }
 
 model Message {
@@ -177,7 +218,84 @@ model Message {
 
   ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   createdBy User?  @relation("MessageCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  attachments Attachment[]
 
   @@index([ticketId])
   @@index([createdById])
+}
+
+model InternalNote {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation("InternalNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model Tag {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  name           String
+  normalizedName String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tickets   TicketTag[]
+
+  @@index([workspaceId])
+  @@unique([workspaceId, normalizedName])
+}
+
+model TicketTag {
+  ticketId String
+  tagId    String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, tagId])
+  @@index([tagId])
+}
+
+model Notification {
+  id         String          @id @default(cuid())
+  userId     String
+  workspaceId String
+  ticketId   String?
+  type       NotificationType
+  title      String
+  body       String
+  readAt     DateTime?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ticket    Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([ticketId])
+}
+
+model Attachment {
+  id                String   @id @default(cuid())
+  messageId         String
+  originalFilename  String
+  mimeType          String
+  sizeBytes         Int
+  storageKey        String   @unique
+  createdAt         DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }

@@ -8,6 +8,8 @@ export type SlaPolicy = {
 
 export type SlaStatus = 'pending' | 'completed' | 'overdue';
 
+export type SlaMonitoringStatus = 'on_track' | 'at_risk' | 'breached' | 'completed' | 'not_applicable';
+
 export const DEFAULT_SLA_POLICIES: Record<TicketPriority, SlaPolicy> = {
   low: {
     priority: 'low',
@@ -73,4 +75,120 @@ export function getResolutionSlaStatus(deadline: Date | null, resolvedAt: Date |
   }
 
   return now.getTime() >= deadline.getTime() ? 'overdue' : 'pending';
+}
+
+export const AT_RISK_THRESHOLD_RATIO = 0.8;
+
+export function getSlaPolicyDurationMs(deadline: Date | null, policyDurationMs: number | null): number | null {
+  if (!deadline || policyDurationMs == null) {
+    return null;
+  }
+
+  return policyDurationMs;
+}
+
+export function getElapsedRatio(deadline: Date | null, createdAt: Date | null, now: Date): number | null {
+  if (!deadline || !createdAt) {
+    return null;
+  }
+
+  const duration = deadline.getTime() - createdAt.getTime();
+
+  if (duration <= 0) {
+    return 1;
+  }
+
+  const elapsed = now.getTime() - createdAt.getTime();
+
+  if (elapsed <= 0) {
+    return 0;
+  }
+
+  if (elapsed >= duration) {
+    return 1;
+  }
+
+  return elapsed / duration;
+}
+
+export function getSlaRemainingMsFromNow(deadline: Date | null, now: Date): number | null {
+  if (!deadline) {
+    return null;
+  }
+
+  return deadline.getTime() - now.getTime();
+}
+
+export function isSlaOverdue(deadline: Date | null, completedAt: Date | null, now: Date): boolean {
+  if (!deadline) {
+    return false;
+  }
+
+  if (completedAt) {
+    return completedAt.getTime() > deadline.getTime();
+  }
+
+  return now.getTime() >= deadline.getTime();
+}
+
+export function getResponseSlaMonitoringStatus(
+  deadline: Date | null,
+  firstResponseAt: Date | null,
+  createdAt: Date | null,
+  now: Date,
+): SlaMonitoringStatus {
+  if (!deadline || !createdAt) {
+    return 'not_applicable';
+  }
+
+  if (firstResponseAt && firstResponseAt.getTime() <= deadline.getTime()) {
+    return 'completed';
+  }
+
+  if (firstResponseAt && firstResponseAt.getTime() > deadline.getTime()) {
+    return 'breached';
+  }
+
+  if (now.getTime() >= deadline.getTime()) {
+    return 'breached';
+  }
+
+  const elapsedRatio = getElapsedRatio(deadline, createdAt, now);
+
+  if (elapsedRatio == null) {
+    return 'not_applicable';
+  }
+
+  return elapsedRatio >= AT_RISK_THRESHOLD_RATIO ? 'at_risk' : 'on_track';
+}
+
+export function getResolutionSlaMonitoringStatus(
+  deadline: Date | null,
+  resolvedAt: Date | null,
+  createdAt: Date | null,
+  now: Date,
+): SlaMonitoringStatus {
+  if (!deadline || !createdAt) {
+    return 'not_applicable';
+  }
+
+  if (resolvedAt && resolvedAt.getTime() <= deadline.getTime()) {
+    return 'completed';
+  }
+
+  if (resolvedAt && resolvedAt.getTime() > deadline.getTime()) {
+    return 'breached';
+  }
+
+  if (now.getTime() >= deadline.getTime()) {
+    return 'breached';
+  }
+
+  const elapsedRatio = getElapsedRatio(deadline, createdAt, now);
+
+  if (elapsedRatio == null) {
+    return 'not_applicable';
+  }
+
+  return elapsedRatio >= AT_RISK_THRESHOLD_RATIO ? 'at_risk' : 'on_track';
 }

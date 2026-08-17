@@ -8,6 +8,11 @@ import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/ti
 import { assertTransitionAllowed } from '@/lib/tickets/workflow';
 import { calculateResponseDeadline, calculateResolutionDeadline } from '@/lib/tickets/sla';
 import type { Prisma } from '@/generated/prisma';
+import { assertCustomerInWorkspace, CustomerNotInWorkspaceError } from '@/lib/customers/server';
+import {
+  createTicketAssignedNotification,
+  createTicketStatusChangedNotification,
+} from '@/lib/notifications/server';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -23,9 +28,12 @@ export class AssigneeNotInWorkspaceError extends Error {
   }
 }
 
+export { CustomerNotInWorkspaceError };
+
 export type TicketWithCreator = {
   id: string;
   workspaceId: string;
+  customerId: string | null;
   createdById: string | null;
   title: string;
   description: string | null;
@@ -54,6 +62,12 @@ export type TicketWithCreator = {
     image: string | null;
     createdAt: Date;
     updatedAt: Date;
+  } | null;
+  customer?: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
   } | null;
 };
 
@@ -106,6 +120,7 @@ type TicketGetOptions = {
   sort?: TicketSortInput | unknown;
   page?: number;
   limit?: number;
+  tagIds?: string[];
 };
 
 function buildTicketWhere(options: {
@@ -115,27 +130,88 @@ function buildTicketWhere(options: {
   assignee?: AssigneeFilter;
   query?: string;
   useOrSearch?: boolean;
+  tagIds?: string[];
 }): Prisma.TicketWhereInput {
-  const { membership, status, priority, assignee, query, useOrSearch } = options;
+  const { membership, status, priority, assignee, query, useOrSearch, tagIds } = options;
+  const normalizedTagIds = tagIds
+    ?.map((tagId) => tagId.trim())
+    .filter((tagId) => Boolean(tagId));
 
-  return {
+  const searchClause = query
+    ? useOrSearch
+      ? {
+          OR: [
+            { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+            { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
+            { createdBy: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
+            { assignedTo: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
+          ],
+        }
+      : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
+    : undefined;
+
+  const tagClause =
+    normalizedTagIds && normalizedTagIds.length > 0
+      ? {
+          OR: normalizedTagIds.map((tagId) => ({
+            ticketTags: { some: { tagId } },
+          })),
+        }
+      : undefined;
+
+  const where: Prisma.TicketWhereInput = {
     workspaceId: membership.workspaceId,
     ...(status ? { status } : {}),
     ...(priority ? { priority } : {}),
     ...(assignee ? { assignedToId: assignee } : {}),
-    ...(query
-      ? useOrSearch
-        ? {
-            OR: [
-              { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
-              { description: { contains: query, mode: 'insensitive' as Prisma.QueryMode } },
-              { createdBy: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
-              { assignedTo: { name: { contains: query, mode: 'insensitive' as Prisma.QueryMode } } },
-            ],
-          }
-        : { title: { contains: query, mode: 'insensitive' as Prisma.QueryMode } }
-      : {}),
   };
+
+  if (searchClause && tagClause) {
+    Object.assign(where, { AND: [searchClause, tagClause] });
+  } else if (searchClause) {
+    Object.assign(where, searchClause);
+  } else if (tagClause) {
+    Object.assign(where, tagClause);
+  }
+
+  return where;
+}
+
+export async function getAllTicketsForMember(options: {
+  status?: StatusFilter;
+  priority?: PriorityFilter;
+  assignee?: AssigneeFilter;
+  search?: SearchFilter | { q?: string };
+  tagIds?: string[];
+  sort?: TicketSortInput | unknown;
+}): Promise<TicketWithCreator[]> {
+  const membership = await getCurrentMembership();
+  const query =
+    typeof options.search === 'string'
+      ? options.search.trim()
+      : options.search && typeof options.search === 'object'
+        ? options.search.q?.trim()
+        : undefined;
+
+  const where = buildTicketWhere({
+    membership,
+    status: options.status,
+    priority: options.priority,
+    assignee: options.assignee,
+    query,
+    useOrSearch: false,
+    tagIds: options.tagIds,
+  });
+
+  const normalizedSort = normalizeTicketSort(options.sort);
+
+  return prisma.ticket
+    .findMany({
+      where,
+      include: { createdBy: true },
+      orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
+    })
+    .then((items) => items as TicketWithCreator[]);
 }
 
 export async function getTickets(options: TicketGetOptions = {}): Promise<TicketPaginationResult<TicketWithCreator>> {
@@ -159,6 +235,7 @@ export async function getTickets(options: TicketGetOptions = {}): Promise<Ticket
     assignee: options.assignee,
     query,
     useOrSearch,
+    tagIds: options.tagIds,
   });
 
   const total = await prisma.ticket.count({ where });
@@ -198,6 +275,7 @@ export async function getTicketById(id: string): Promise<TicketWithCreator> {
     include: {
       createdBy: true,
       assignedTo: true,
+      customer: true,
     },
   });
 
@@ -222,11 +300,18 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
       status: true,
       priority: true,
       resolvedAt: true,
+      customerId: true,
     },
   });
 
   if (!existing) {
     throw new TicketNotFoundError();
+  }
+
+  if (parsed.customerId !== undefined && parsed.customerId !== existing.customerId) {
+    if (parsed.customerId !== null) {
+      await assertCustomerInWorkspace(parsed.customerId, membership.workspaceId);
+    }
   }
 
   const data: Prisma.TicketUpdateInput = { ...parsed };
@@ -241,13 +326,14 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
 
   const hasStatusChange = parsed.status !== undefined && parsed.status !== existing.status;
   const hasPriorityChange = parsed.priority !== undefined && parsed.priority !== existing.priority;
+  const hasCustomerChange = parsed.customerId !== undefined && parsed.customerId !== existing.customerId;
 
-  if (!hasStatusChange && !hasPriorityChange) {
+  if (!hasStatusChange && !hasPriorityChange && !hasCustomerChange) {
     return prisma.ticket
       .update({
         where: { id },
         data,
-        include: { createdBy: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -256,7 +342,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     const updated = await tx.ticket.update({
       where: { id },
       data,
-      include: { createdBy: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     if (hasStatusChange && parsed.status) {
@@ -270,6 +356,15 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
       });
     }
 
+    if (hasStatusChange && parsed.status && updated.assignedToId !== membership.userId) {
+      await createTicketStatusChangedNotification({
+        actorId: membership.userId,
+        ticketId: updated.id,
+        workspaceId: membership.workspaceId,
+        tx,
+      });
+    }
+
     if (hasPriorityChange && parsed.priority) {
       await tx.ticketActivity.create({
         data: {
@@ -277,6 +372,25 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
           actorId: membership.userId,
           type: 'PRIORITY_CHANGED',
           metadata: { from: existing.priority, to: parsed.priority },
+        },
+      });
+    }
+
+    if (hasCustomerChange) {
+      const activityType = updated.customerId === null ? 'CUSTOMER_UNLINKED' : 'CUSTOMER_LINKED';
+      const activityMetadata: Record<string, string | null> =
+        updated.customerId === null
+          ? { from: existing.customerId, to: null }
+          : existing.customerId === null
+            ? { from: null, to: updated.customerId }
+            : { from: existing.customerId, to: updated.customerId };
+
+      await tx.ticketActivity.create({
+        data: {
+          ticketId: updated.id,
+          actorId: membership.userId,
+          type: activityType,
+          metadata: activityMetadata,
         },
       });
     }
@@ -310,6 +424,8 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
         data: { status: 'closed' },
         include: {
           createdBy: true,
+          assignedTo: true,
+          customer: true,
         },
       })
       .then((item) => item as TicketWithCreator);
@@ -323,6 +439,8 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
       data: { status: 'closed' },
       include: {
         createdBy: true,
+        assignedTo: true,
+        customer: true,
       },
     });
 
@@ -377,7 +495,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
       .update({
         where: { id },
         data: { assignedToId: parsed.assigneeId },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -386,7 +504,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
     const updated = await tx.ticket.update({
       where: { id },
       data: { assignedToId: parsed.assigneeId },
-      include: { createdBy: true, assignedTo: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     await tx.ticketActivity.create({
@@ -397,6 +515,17 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
         metadata: { from: existing.assignedToId, to: parsed.assigneeId },
       },
     });
+
+    if (updated.assignedToId !== membership.userId) {
+      await createTicketAssignedNotification({
+        actorId: membership.userId,
+        ticketId: updated.id,
+        assigneeId: updated.assignedToId ?? '',
+        previousAssigneeId: existing.assignedToId,
+        workspaceId: membership.workspaceId,
+        tx,
+      });
+    }
 
     return updated as TicketWithCreator;
   });
@@ -425,7 +554,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
       .update({
         where: { id },
         data: { assignedToId: null },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       })
       .then((item) => item as TicketWithCreator);
   }
@@ -434,7 +563,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
     const updated = await tx.ticket.update({
       where: { id },
       data: { assignedToId: null },
-      include: { createdBy: true, assignedTo: true },
+      include: { createdBy: true, assignedTo: true, customer: true },
     });
 
     await tx.ticketActivity.create({

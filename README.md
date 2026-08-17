@@ -113,4 +113,5 @@ GitHub Actions workflow runs `npm ci`, `npm run lint`, `npm run typecheck`, and 
 - Redis is deferred until background jobs are introduced in a later phase.
 - Phase 3 focuses on ticket discovery and dashboard UX: search, filters, sorting, pagination, empty/loading/error states, accessibility, and responsive polish.
 - Phase 4 implements ticket workflow and management as `v0.3.0-alpha`, documented in `docs/phase-4/spec.md` and `docs/phase-4/task-*.md`.
+- Phase 5 Task 1 adds the Customer/Contact foundation: `/api/customers` and `/api/customers/[id]`, workspace-scoped customer records, and Prisma `Customer` model/migration.
 - `src/app/api/tickets/search/route.ts` provides a dedicated search API surface; `/dashboard/tickets` supports URL-synchronized search, filters, sort, and pagination.

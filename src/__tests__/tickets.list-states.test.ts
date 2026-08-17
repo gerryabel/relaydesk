@@ -105,7 +105,7 @@ describe('ticket list states', () => {
       await expect(getTicketById('missing')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'missing', workspaceId: 'workspace-123' },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       });
     } finally {
       findFirstSpy.mockRestore();
@@ -119,7 +119,7 @@ describe('ticket list states', () => {
       await expect(getTicketById('ticket-2')).rejects.toThrow(TicketNotFoundError);
       expect(findFirstSpy).toHaveBeenCalledWith({
         where: { id: 'ticket-2', workspaceId: 'workspace-123' },
-        include: { createdBy: true, assignedTo: true },
+        include: { createdBy: true, assignedTo: true, customer: true },
       });
     } finally {
       findFirstSpy.mockRestore();

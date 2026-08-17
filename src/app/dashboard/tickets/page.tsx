@@ -1,5 +1,5 @@
 import { getTickets } from '@/lib/tickets/server';
-import TicketCard from '@/components/tickets/ticket-card';
+import TicketSelectionList from '@/components/tickets/ticket-selection-list';
 import { EmptyState } from '@/components/ui/empty-state';
 import TicketFilterControls from '@/components/tickets/ticket-filters';
 import TicketSortControls from '@/components/tickets/ticket-sort-control';
@@ -8,6 +8,7 @@ import type { TicketFiltersInput } from '@/lib/tickets/schema';
 import { normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import Link from 'next/link';
 import { getWorkspaceMembers } from '@/lib/workspace/server';
+import { getTags } from '@/lib/tags/server';
 
 export function parseFilters(resolved: Record<string, unknown>): TicketFiltersInput {
   const search = (resolved.q ?? resolved.search) as string | undefined;
@@ -64,7 +65,8 @@ export function buildQueryString(
   nextSearch: string,
   nextStatus: string,
   nextPriority: string,
-  nextAssignee: string
+  nextAssignee: string,
+  nextTagId: string
 ) {
   const params = new URLSearchParams(searchParams.toString());
 
@@ -90,6 +92,12 @@ export function buildQueryString(
     params.delete('assignee');
   } else {
     params.set('assignee', nextAssignee);
+  }
+
+  if (!nextTagId) {
+    params.delete('tagId');
+  } else {
+    params.set('tagId', nextTagId);
   }
 
   return params.toString();
@@ -122,7 +130,6 @@ export function buildPaginationQuery(resolved: Record<string, unknown>, page: nu
   return params.toString();
 }
 
-
 type FilteredTicketsPagePropsResolved = {
   searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
 };
@@ -134,7 +141,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
   const page = parsePage(resolved);
   const limit = parseLimit(resolved);
   const resolvedSearchParams = buildResolvedSearchParams(resolved);
-  const members = await getWorkspaceMembers();
+  const [members, tags] = await Promise.all([getWorkspaceMembers(), getTags()]);
 
   const result = await getTickets({
     status: filters.status,
@@ -144,9 +151,10 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
     sort,
     page,
     limit,
+    tagIds: resolved.tagId && typeof resolved.tagId === 'string' ? [resolved.tagId] : undefined,
   });
 
-  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority || filters.assignee);
+  const hasActiveFilters = Boolean(filters.search || filters.status || filters.priority || filters.assignee || resolved.tagId);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -162,7 +170,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
 
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <TicketFilterControls members={members} />
+            <TicketFilterControls members={members} tags={tags} />
             <TicketSortControls />
           </div>
         </div>
@@ -174,7 +182,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Pencarian: {filters.search}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '', filters.assignee ?? '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, '', filters.status ?? '', filters.priority ?? '', filters.assignee ?? '', (resolved.tagId as string | undefined) ?? '')}`}
                   aria-label={`Hapus filter pencarian: ${filters.search}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
@@ -186,7 +194,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Status: {filters.status}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '', filters.assignee ?? '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', '', filters.priority ?? '', filters.assignee ?? '', (resolved.tagId as string | undefined) ?? '')}`}
                   aria-label={`Hapus filter status: ${filters.status}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
@@ -198,7 +206,7 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Prioritas: {filters.priority}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '', filters.assignee ?? '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', '', filters.assignee ?? '', (resolved.tagId as string | undefined) ?? '')}`}
                   aria-label={`Hapus filter prioritas: ${filters.priority}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
@@ -210,8 +218,20 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
               <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
                 Assignee: {filters.assignee}
                 <Link
-                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', filters.priority ?? '', '')}`}
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', filters.priority ?? '', '', (resolved.tagId as string | undefined) ?? '')}`}
                   aria-label={`Hapus filter assignee: ${filters.assignee}`}
+                  className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+                >
+                  ×
+                </Link>
+              </span>
+            ) : null}
+            {resolved.tagId ? (
+              <span className="inline-flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1 dark:border-neutral-700">
+                Tag: {resolved.tagId}
+                <Link
+                  href={`?${buildQueryString(resolvedSearchParams, filters.search ?? '', filters.status ?? '', filters.priority ?? '', filters.assignee ?? '', '')}`}
+                  aria-label={`Hapus filter tag: ${resolved.tagId}`}
                   className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
                 >
                   ×
@@ -249,52 +269,50 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
             }
           />
         ) : (
-          <>
-            <div className="grid grid-cols-1 gap-4">
-              {result.data.map((ticket) => (
-                <TicketCard key={ticket.id} ticket={ticket} />
-              ))}
-            </div>
-
-            <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
-              <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
-                Halaman {result.page} dari {result.totalPages} • {result.total} tiket
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                {result.hasPreviousPage ? (
-                  <Link
-                    href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
-                  >
-                    Sebelumnya
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
-                  >
-                    Sebelumnya
-                  </span>
-                )}
-                {result.hasNextPage ? (
-                  <Link
-                    href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
-                  >
-                    Berikutnya
-                  </Link>
-                ) : (
-                  <span
-                    aria-disabled="true"
-                    className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
-                  >
-                    Berikutnya
-                  </span>
-                )}
-              </div>
-            </nav>
-          </>
+          <TicketSelectionList
+            tickets={result.data}
+            members={members}
+            tags={tags}
+          />
         )}
+
+        <nav className="flex flex-wrap items-center justify-between gap-3 text-sm" aria-label="Navigasi tiket">
+          <span className="min-w-0 text-neutral-600 dark:text-neutral-300">
+            Halaman {result.page} dari {result.totalPages} • {result.total} tiket
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {result.hasPreviousPage ? (
+              <Link
+                href={`?${buildPaginationQuery(resolved, result.page - 1, result.limit)}`}
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+              >
+                Sebelumnya
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+              >
+                Sebelumnya
+              </span>
+            )}
+            {result.hasNextPage ? (
+              <Link
+                href={`?${buildPaginationQuery(resolved, result.page + 1, result.limit)}`}
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 hover:border-neutral-900 dark:border-neutral-700 dark:hover:border-neutral-100"
+              >
+                Berikutnya
+              </Link>
+            ) : (
+              <span
+                aria-disabled="true"
+                className="inline-flex items-center justify-center rounded-md border border-neutral-300 px-3 py-2 opacity-60 dark:border-neutral-700"
+              >
+                Berikutnya
+              </span>
+            )}
+          </div>
+        </nav>
       </div>
     </div>
   );
