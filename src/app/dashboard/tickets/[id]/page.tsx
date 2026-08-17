@@ -5,8 +5,10 @@ import type { MessageWithCreator } from '@/lib/messages/server';
 import { TicketNotFoundError as MessagesTicketNotFoundError } from '@/lib/messages/server';
 import { getWorkspaceMembers } from '@/lib/workspace/server';
 import { getTicketActivities } from '@/lib/tickets/activity';
+import { getInternalNotes } from '@/lib/internal-notes/server';
 import AssignTicketForm from '@/components/tickets/assign-ticket-form';
 import CreateMessageForm from '@/components/tickets/create-message-form';
+import CreateInternalNoteForm from '@/components/tickets/create-internal-note-form';
 import TicketTransitionForm from '@/components/tickets/ticket-transition-form';
 import ActivityTimeline from '@/components/tickets/activity-timeline';
 import { getTicketTags, getTags } from '@/lib/tags/server';
@@ -116,6 +118,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   let ticket;
   let messages: MessageWithCreator[] = [];
   let activities: Awaited<ReturnType<typeof getTicketActivities>> = [];
+  let internalNotes: Awaited<ReturnType<typeof getInternalNotes>> = [];
 
   try {
     ticket = await getTicketById(resolved.id);
@@ -142,6 +145,12 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
       throw notFound();
     }
     console.error('Failed to load ticket activities', error);
+  }
+
+  try {
+    internalNotes = await getInternalNotes(resolved.id);
+  } catch (error) {
+    console.error('Failed to load internal notes', error);
   }
 
   const creator = ticket.createdBy?.name ?? 'Unknown';
@@ -320,6 +329,53 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
 
           <div id="message-form" className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
             <CreateMessageForm ticketId={ticket.id} />
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-4">
+          <header className="flex flex-col gap-1">
+            <h2 className="text-xl font-semibold">Internal Notes</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              Catatan internal hanya untuk tim. Tidak terlihat oleh pelanggan.
+            </p>
+          </header>
+
+          {internalNotes.length === 0 ? (
+            <EmptyState
+              title="Belum ada catatan internal"
+              description="Tambahkan catatan internal untuk kolaborasi tim."
+              action={<Button href="#internal-note-form">Add internal note</Button>}
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {internalNotes.map((note) => (
+                <div
+                  key={note.id}
+                  className="rounded-md border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-col gap-1">
+                      <p className="text-sm font-medium text-neutral-900 dark:text-neutral-50">
+                        {note.author?.name ?? 'Unknown'}
+                      </p>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                        Internal only — not visible to customer
+                      </p>
+                    </div>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                      {new Date(note.createdAt).toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">
+                    {note.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div id="internal-note-form" className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+            <CreateInternalNoteForm ticketId={ticket.id} />
           </div>
         </section>
 

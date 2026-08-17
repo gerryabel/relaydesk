@@ -22,6 +22,7 @@ model User {
   createdTickets  Ticket[]     @relation("TicketCreator")
   assignedTickets Ticket[]     @relation("TicketAssignee")
   createdMessages Message[]    @relation("MessageCreator")
+  internalNotes   InternalNote[] @relation("InternalNoteAuthor")
   activities      TicketActivity[] @relation("TicketActivityActor")
   notifications   Notification[]
 }
@@ -103,6 +104,7 @@ enum TicketActivityType {
   CUSTOMER_UNLINKED
   TAG_ADDED
   TAG_REMOVED
+  INTERNAL_NOTE_CREATED
 }
 
 enum NotificationType {
@@ -193,6 +195,7 @@ model Ticket {
   createdBy   User?       @relation("TicketCreator", fields: [createdById], references: [id], onDelete: SetNull)
   assignedTo  User?       @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
   messages    Message[]
+  internalNotes InternalNote[]
   activities  TicketActivity[]
   ticketTags  TicketTag[]
   notifications Notification[]
@@ -216,6 +219,21 @@ model Message {
 
   @@index([ticketId])
   @@index([createdById])
+}
+
+model InternalNote {
+  id         String   @id @default(cuid())
+  ticketId   String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User   @relation("InternalNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@index([authorId, createdAt])
 }
 
 model Tag {
