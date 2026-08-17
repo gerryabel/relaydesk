@@ -9,6 +9,10 @@ import { assertTransitionAllowed } from '@/lib/tickets/workflow';
 import { calculateResponseDeadline, calculateResolutionDeadline } from '@/lib/tickets/sla';
 import type { Prisma } from '@/generated/prisma';
 import { assertCustomerInWorkspace, CustomerNotInWorkspaceError } from '@/lib/customers/server';
+import {
+  createTicketAssignedNotification,
+  createTicketStatusChangedNotification,
+} from '@/lib/notifications/server';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -352,6 +356,15 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
       });
     }
 
+    if (hasStatusChange && parsed.status && updated.assignedToId !== membership.userId) {
+      await createTicketStatusChangedNotification({
+        actorId: membership.userId,
+        ticketId: updated.id,
+        workspaceId: membership.workspaceId,
+        tx,
+      });
+    }
+
     if (hasPriorityChange && parsed.priority) {
       await tx.ticketActivity.create({
         data: {
@@ -502,6 +515,17 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
         metadata: { from: existing.assignedToId, to: parsed.assigneeId },
       },
     });
+
+    if (updated.assignedToId !== membership.userId) {
+      await createTicketAssignedNotification({
+        actorId: membership.userId,
+        ticketId: updated.id,
+        assigneeId: updated.assignedToId ?? '',
+        previousAssigneeId: existing.assignedToId,
+        workspaceId: membership.workspaceId,
+        tx,
+      });
+    }
 
     return updated as TicketWithCreator;
   });
