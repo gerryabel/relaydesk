@@ -16,6 +16,13 @@ jobs:
           node-version: 20
           cache: 'npm'
       - run: npm ci
+      - run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://localhost:5432/relaydesk
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
+        env:
+          DATABASE_URL: postgresql://localhost:5432/relaydesk
+          BETTER_AUTH_SECRET: ci-test-secret-at-least-32-characters-long
+          BETTER_AUTH_URL: http://localhost:3000
