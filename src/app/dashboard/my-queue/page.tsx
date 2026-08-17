@@ -67,7 +67,7 @@ export function buildQueueQueryString(
   nextStatus: string,
   nextPriority: string,
   nextView: string
-) {
+): URLSearchParams {
   const params = new URLSearchParams(searchParams.toString());
 
   if (!nextSearch) {
@@ -94,23 +94,43 @@ export function buildQueueQueryString(
     params.set('view', nextView);
   }
 
-  return params.toString();
+  return params;
 }
 
-function buildViewQueryString(resolved: Record<string, unknown>, view: string) {
-  const params = buildQueueQueryString(
-    new URLSearchParams(),
-    (resolved.search as string | undefined) ?? '',
-    (resolved.status as string | undefined) ?? '',
-    (resolved.priority as string | undefined) ?? '',
-    view,
-  );
+function buildViewQueryString(resolved: Record<string, unknown>, view: string): string {
+  const search = (resolved.search as string | undefined) ?? '';
+  const status = (resolved.status as string | undefined) ?? '';
+  const priority = (resolved.priority as string | undefined) ?? '';
+  const sort = (resolved.sort as string | undefined) ?? '';
+  const tagId = (resolved.tagId as string | undefined) ?? '';
 
-  if (!params) {
+  const merged = new URLSearchParams();
+
+  if (search.trim() !== '') {
+    merged.set('search', search.trim());
+  }
+  if (status.trim() !== '') {
+    merged.set('status', status.trim());
+  }
+  if (priority.trim() !== '') {
+    merged.set('priority', priority.trim());
+  }
+  if (sort.trim() !== '') {
+    merged.set('sort', sort.trim());
+  }
+  if (tagId.trim() !== '') {
+    merged.set('tagId', tagId.trim());
+  }
+
+  if (view && view !== DEFAULT_QUEUE_VIEW) {
+    merged.set('view', view);
+  }
+
+  if ([...merged.values()].length === 0) {
     return '';
   }
 
-  return `?${params}`;
+  return `?${merged.toString()}`;
 }
 
 function buildPaginationQuery(resolved: Record<string, unknown>, page: number, limit: number, view: string) {

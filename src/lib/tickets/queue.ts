@@ -1,4 +1,4 @@
-import { getTickets } from './server';
+import { getAllTicketsForMember } from './server';
 import { getResponseSlaMonitoringStatus, getResolutionSlaMonitoringStatus } from '@/lib/tickets/sla';
 import { normalizeTicketSort, type TicketSortInput } from './sort';
 import { normalizeTicketPagination, type TicketPaginationResult } from './pagination';
@@ -74,18 +74,16 @@ export async function getMyQueueTickets(options: {
     .filter((tagId): tagId is string => Boolean(tagId));
   const now = new Date();
 
-  const rawResult = await getTickets({
-    search: search ? { q: search } : undefined,
+  const tickets = await getAllTicketsForMember({
+    search,
     sort: normalizedSort,
-    page: 1,
-    limit: 100,
     assignee: membership.userId,
     tagIds,
-    ...(options.status ? { status: options.status } : {}),
-    ...(options.priority ? { priority: options.priority } : {}),
+    status: options.status,
+    priority: options.priority,
   });
 
-  const filtered = rawResult.data.filter((ticket) => {
+  const filtered = tickets.filter((ticket) => {
     if (!ACTIONABLE_STATUSES.has(ticket.status)) {
       return false;
     }
@@ -128,15 +126,13 @@ export async function getMyQueueCounts(options: {
     .filter((tagId): tagId is string => Boolean(tagId));
   const now = new Date();
 
-  const rawResult = await getTickets({
-    search: search ? { q: search } : undefined,
+  const tickets = await getAllTicketsForMember({
+    search,
     sort: normalizeTicketSort(options.sort as TicketSortInput | undefined),
-    page: 1,
-    limit: 100,
     assignee: membership.userId,
     tagIds,
-    ...(options.status ? { status: options.status } : {}),
-    ...(options.priority ? { priority: options.priority } : {}),
+    status: options.status,
+    priority: options.priority,
   });
 
   const counts = {
@@ -146,7 +142,7 @@ export async function getMyQueueCounts(options: {
     'sla-risk': 0,
   } as Record<QueueView, number>;
 
-  for (const ticket of rawResult.data) {
+  for (const ticket of tickets) {
     if (!ACTIONABLE_STATUSES.has(ticket.status)) {
       continue;
     }

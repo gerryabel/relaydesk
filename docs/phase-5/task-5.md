@@ -2,13 +2,13 @@
 
 ## Status
 
-In Progress
+Completed
 
 ## Objective
 
 Provide a focused personal queue on top of the existing ticket infrastructure so agents can answer: "Tiket apa yang perlu aku kerjakan sekarang?"
 
-My Queue is a view layer, not a new persistence model. It reuses `getTickets()`, `TicketCard`, and the Task 4 SLA helpers.
+My Queue is a view layer, not a new persistence model. It reuses `getAllTicketsForMember()`, `TicketCard`, and the Task 4 SLA helpers.
 
 ## Queue Architecture
 
@@ -24,17 +24,16 @@ My Queue is a view layer, not a new persistence model. It reuses `getTickets()`,
 Helpers:
 
 * `resolveQueueView()` — maps raw view input to a known queue preset; unknown values fall back to `my-open`.
-* `getMyQueueTickets()` — scoped to the current authenticated agent and current workspace, applies view classification, then paginates in memory.
 * `getMyQueueCounts()` — derives counts for all queue views from the same scoped ticket set.
 
-All queue data flows through `getTickets()` from `src/lib/tickets/server.ts`, preserving the existing workspace boundary, search, tag filters, sort, and pagination validation.
+All queue data flows through `getAllTicketsForMember()` in `src/lib/tickets/server.ts`, preserving the existing workspace boundary, search, tag filters, sort, and pagination validation.
 
 ## Current-User Enforcement
 
 Authorization uses the existing workspace membership layer:
 
 * `getCurrentMembership()` returns the current user's workspace and user ID.
-* `getMyQueueTickets()` and `getMyQueueCounts()` both pass `assignee: membership.userId` to `getTickets()`.
+* `getMyQueueTickets()` and `getMyQueueCounts()` both pass `assignee: membership.userId` to `getAllTicketsForMember()`.
 * URL-supplied `assignee` parameters are never trusted for authorization. If a caller provides `?assignee=other-user`, the queue implementation ignores that value and continues to scope to `membership.userId`.
 
 This ensures a user cannot see another agent's queue through URL manipulation.

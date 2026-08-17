@@ -173,6 +173,43 @@ function buildTicketWhere(options: {
   return where;
 }
 
+export async function getAllTicketsForMember(options: {
+  status?: StatusFilter;
+  priority?: PriorityFilter;
+  assignee?: AssigneeFilter;
+  search?: SearchFilter | { q?: string };
+  tagIds?: string[];
+  sort?: TicketSortInput | unknown;
+}): Promise<TicketWithCreator[]> {
+  const membership = await getCurrentMembership();
+  const query =
+    typeof options.search === 'string'
+      ? options.search.trim()
+      : options.search && typeof options.search === 'object'
+        ? options.search.q?.trim()
+        : undefined;
+
+  const where = buildTicketWhere({
+    membership,
+    status: options.status,
+    priority: options.priority,
+    assignee: options.assignee,
+    query,
+    useOrSearch: false,
+    tagIds: options.tagIds,
+  });
+
+  const normalizedSort = normalizeTicketSort(options.sort);
+
+  return prisma.ticket
+    .findMany({
+      where,
+      include: { createdBy: true },
+      orderBy: normalizedSort ? mapTicketSortToOrderBy(normalizedSort) : { createdAt: 'desc' },
+    })
+    .then((items) => items as TicketWithCreator[]);
+}
+
 export async function getTickets(options: TicketGetOptions = {}): Promise<TicketPaginationResult<TicketWithCreator>> {
   const membership = await getCurrentMembership();
   const query =
