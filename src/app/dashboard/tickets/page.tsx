@@ -273,7 +273,6 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
             tickets={result.data}
             members={members}
             tags={tags}
-            searchParams={resolvedSearchParams.toString()}
           />
         )}
 

@@ -9,11 +9,9 @@ type TicketSelectionListProps = {
   tickets: TicketWithCreator[];
   members: Array<{ id: string; name: string }>;
   tags: Array<{ id: string; name: string }>;
-  searchParams: string;
-  onApplied?: () => void;
 };
 
-export default function TicketSelectionList({ tickets, members, tags, searchParams, onApplied }: TicketSelectionListProps) {
+export default function TicketSelectionList({ tickets, members, tags }: TicketSelectionListProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const allVisibleIds = useMemo(() => tickets.map((ticket) => ticket.id), [tickets]);
@@ -42,11 +40,6 @@ export default function TicketSelectionList({ tickets, members, tags, searchPara
     setSelectedIds(Array.from(merged));
   };
 
-  const handleApplied = () => {
-    setSelectedIds([]);
-    onApplied?.();
-  };
-
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -69,7 +62,7 @@ export default function TicketSelectionList({ tickets, members, tags, searchPara
         ) : null}
       </div>
       {selectedIds.length > 0 ? (
-        <BulkActionToolbar selectedIds={selectedIds} members={members} tags={tags} onApplied={handleApplied} />
+        <BulkActionToolbar selectedIds={selectedIds} members={members} tags={tags} onApplied={() => setSelectedIds([])} />
       ) : null}
       <div className="grid grid-cols-1 gap-4">
         {tickets.map((ticket) => (

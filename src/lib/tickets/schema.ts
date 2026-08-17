@@ -71,6 +71,7 @@ export const unassignTicketSchema = z.object({});
 export type AssignTicketInput = z.infer<typeof assignTicketSchema>;
 export type UnassignTicketInput = z.infer<typeof unassignTicketSchema>;
 export type TicketAssigneeFilterInput = z.infer<typeof ticketAssigneeFilterSchema>;
+export type TicketFiltersInput = z.infer<typeof ticketFiltersSchema>;
 
 export const bulkActionSchema = z.object({
   ticketIds: z.array(z.string().trim().min(1, 'Ticket ID tidak valid')).min(1, 'Pilih minimal satu tiket').max(100, 'Maksimal 100 tiket'),

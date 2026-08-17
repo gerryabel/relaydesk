@@ -56,11 +56,30 @@ export default function TicketCard({ ticket, selected, selectionName, onSelectio
   const now = new Date();
   const responseStatus = getResponseSlaMonitoringStatus(ticket.responseSlaDeadline, ticket.firstResponseAt, ticket.createdAt, now);
   const resolutionStatus = getResolutionSlaMonitoringStatus(ticket.resolutionSlaDeadline, ticket.resolvedAt, ticket.createdAt, now);
-  const name = selectionName ?? `Pilih ${ticket.title}`;
+  const selectable = Boolean(onSelectionChange && selectionName);
+  const name = selectionName ?? `Buka detail tiket: ${ticket.title}`;
 
   const card = (
     <Card className="transition hover:border-neutral-300 dark:hover:border-neutral-700">
       <div className="flex flex-col gap-3 p-5">
+        {selectable ? (
+          <label
+            className="flex items-center gap-2 text-sm text-neutral-900 dark:text-neutral-50"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          >
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-neutral-300"
+              checked={selected ?? false}
+              onChange={(event) => onSelectionChange?.(ticket.id, event.target.checked)}
+              onClick={(event) => event.stopPropagation()}
+            />
+            <span>{name}</span>
+          </label>
+        ) : null}
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-50">
@@ -89,27 +108,13 @@ export default function TicketCard({ ticket, selected, selectionName, onSelectio
     </Card>
   );
 
-  if (!onSelectionChange || !selectionName) {
+  if (selectable) {
     return <div className="block">{card}</div>;
   }
 
   return (
-    <label className="block">
-      <span className="sr-only">{name}</span>
-      <input
-        type="checkbox"
-        className="sr-only"
-        checked={selected ?? false}
-        onChange={(event) => onSelectionChange(ticket.id, event.target.checked)}
-      />
-      <span
-        aria-hidden="true"
-        className={`pointer-events-none block rounded-md border-2 ${
-          selected ? 'border-neutral-900 dark:border-neutral-100' : 'border-transparent'
-        }`}
-      >
-        {card}
-      </span>
-    </label>
+    <Link href={`/dashboard/tickets/${ticket.id}`} className="block">
+      {card}
+    </Link>
   );
 }

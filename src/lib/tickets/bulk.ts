@@ -1,19 +1,19 @@
 import { prisma } from '@/lib/db/prisma';
 import { getCurrentMembership } from '@/lib/workspace/server';
-import { assertTransitionAllowed } from '@/lib/tickets/workflow';
+import { assertTransitionAllowed, type TicketStatus } from '@/lib/tickets/workflow';
 import {
   bulkActionSchema,
   bulkAssignPayloadSchema,
   bulkStatusPayloadSchema,
   bulkPriorityPayloadSchema,
   bulkTagPayloadSchema,
-  type BulkActionInput,
 } from '@/lib/tickets/schema';
 import {
   createTicketAssignedNotification,
   createTicketStatusChangedNotification,
 } from '@/lib/notifications/server';
-import type { TicketWithCreator } from '@/lib/tickets/server';
+
+type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export class BulkTicketIdsRequiredError extends Error {
   constructor(message = 'Pilih minimal satu tiket.') {
@@ -76,6 +76,24 @@ export type BulkUpdateResult = {
   noOpCount: number;
 };
 
+export type TicketBulkSelection = {
+  id: string;
+  workspaceId: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assignedToId: string | null;
+  resolvedAt: Date | null;
+  title: string;
+};
+
+type BulkAction = 'assign' | 'status' | 'priority' | 'add_tag' | 'remove_tag';
+
+export type BulkActionInput = {
+  ticketIds: string[];
+  action: BulkAction;
+  value: unknown;
+};
+
 const MAX_BULK_TICKETS = 100;
 
 export function normalizeBulkTicketIds(ticketIds: string[]) {
@@ -97,7 +115,7 @@ export function normalizeBulkTicketIds(ticketIds: string[]) {
   return uniqueIds;
 }
 
-export function assertBulkActionAllowed(action: unknown): asserts action is BulkActionInput['action'] {
+export function assertBulkActionAllowed(action: unknown): asserts action is BulkAction {
   const parsed = bulkActionSchema.pick({ action: true }).safeParse({ action });
 
   if (!parsed.success) {
@@ -105,48 +123,34 @@ export function assertBulkActionAllowed(action: unknown): asserts action is Bulk
   }
 }
 
-function assertBulkAssignPayload(value: unknown) {
-  const parsed = bulkAssignPayloadSchema.safeParse({ assigneeId: value });
-
-  if (!parsed.success) {
-    throw new BulkAssigneeNotInWorkspaceError(parsed.error.issues[0]?.message ?? 'Invalid assignee');
+function validateBulkValue(action: BulkAction, value: unknown) {
+  if (action === 'assign') {
+    const assigneeId = typeof value === 'string' ? value : bulkAssignPayloadSchema.parse(value).assigneeId;
+    return assigneeId;
   }
 
-  return parsed.data;
-}
-
-function assertBulkStatusPayload(value: unknown) {
-  const parsed = bulkStatusPayloadSchema.safeParse({ status: value });
-
-  if (!parsed.success) {
-    throw new BulkInvalidTransitionError(parsed.error.issues[0]?.message ?? 'Invalid status');
+  if (action === 'status') {
+    const status = typeof value === 'string' ? value : bulkStatusPayloadSchema.parse(value).status;
+    return status as TicketBulkSelection['status'];
   }
 
-  return parsed.data;
-}
-
-function assertBulkPriorityPayload(value: unknown) {
-  const parsed = bulkPriorityPayloadSchema.safeParse({ priority: value });
-
-  if (!parsed.success) {
-    throw new BulkActionNotSupportedError(parsed.error.issues[0]?.message ?? 'Invalid priority');
+  if (action === 'priority') {
+    const priority = typeof value === 'string' ? value : bulkPriorityPayloadSchema.parse(value).priority;
+    return priority as TicketBulkSelection['priority'];
   }
 
-  return parsed.data;
-}
-
-function assertBulkTagPayload(value: unknown) {
-  const parsed = bulkTagPayloadSchema.safeParse({ tagId: value });
-
-  if (!parsed.success) {
-    throw new BulkTagNotFoundError(parsed.error.issues[0]?.message ?? 'Invalid tag');
+  if (action === 'add_tag' || action === 'remove_tag') {
+    const tagId = typeof value === 'string' ? value : bulkTagPayloadSchema.parse(value).tagId;
+    return tagId;
   }
 
-  return parsed.data;
+  throw new BulkActionNotSupportedError();
 }
 
-async function assertAssigneeInWorkspace(assigneeId: string, workspaceId: string) {
-  const assigneeMembership = await prisma.membership.findFirst({
+type TransactionClient = Parameters<Parameters<typeof prisma['$transaction']>[0]>[0];
+
+async function assertAssigneeInWorkspace(tx: TransactionClient, assigneeId: string, workspaceId: string) {
+  const assigneeMembership = await tx.membership.findFirst({
     where: { userId: assigneeId, workspaceId },
     select: { id: true },
   });
@@ -156,8 +160,8 @@ async function assertAssigneeInWorkspace(assigneeId: string, workspaceId: string
   }
 }
 
-async function assertTagInWorkspace(tagId: string, workspaceId: string) {
-  const tag = await prisma.tag.findFirst({
+async function assertTagInWorkspace(tx: TransactionClient, tagId: string, workspaceId: string) {
+  const tag = await tx.tag.findFirst({
     where: { id: tagId },
     select: { id: true, workspaceId: true },
   });
@@ -171,7 +175,7 @@ async function assertTagInWorkspace(tagId: string, workspaceId: string) {
   }
 }
 
-async function loadBulkSelection(ticketIds: string[], workspaceId: string) {
+async function loadBulkSelection(ticketIds: string[], workspaceId: string): Promise<TicketBulkSelection[]> {
   const tickets = await prisma.ticket.findMany({
     where: {
       id: { in: ticketIds },
@@ -192,10 +196,18 @@ async function loadBulkSelection(ticketIds: string[], workspaceId: string) {
     throw new BulkTicketIdsRequiredError('Satu atau lebih tiket tidak ditemukan.');
   }
 
-  return tickets as TicketWithCreator[];
+  return tickets as TicketBulkSelection[];
 }
 
-async function applyBulkAssignment(tx: typeof prisma, tickets: TicketWithCreator[], membership: { userId: string; workspaceId: string }, assigneeId: string) {
+function validateBulkStatusChange(tickets: TicketBulkSelection[], nextStatus: TicketStatus) {
+  for (const ticket of tickets) {
+    if (ticket.status !== nextStatus) {
+      assertTransitionAllowed(ticket.status, nextStatus);
+    }
+  }
+}
+
+async function applyBulkAssignment(tx: TransactionClient, tickets: TicketBulkSelection[], membership: { userId: string; workspaceId: string }, assigneeId: string) {
   let updatedCount = 0;
   let noOpCount = 0;
 
@@ -237,15 +249,11 @@ async function applyBulkAssignment(tx: typeof prisma, tickets: TicketWithCreator
   return { updatedCount, noOpCount };
 }
 
-async function applyBulkStatusChange(tx: typeof prisma, tickets: TicketWithCreator[], membership: { userId: string; workspaceId: string }, nextStatus: string) {
+async function applyBulkStatusChange(tx: TransactionClient, tickets: TicketBulkSelection[], membership: { userId: string; workspaceId: string }, nextStatus: TicketStatus) {
   let updatedCount = 0;
   let noOpCount = 0;
 
   for (const ticket of tickets) {
-    if (ticket.status !== nextStatus) {
-      assertTransitionAllowed(ticket.status, nextStatus);
-    }
-
     if (ticket.status === nextStatus) {
       noOpCount += 1;
       continue;
@@ -287,7 +295,7 @@ async function applyBulkStatusChange(tx: typeof prisma, tickets: TicketWithCreat
   return { updatedCount, noOpCount };
 }
 
-async function applyBulkPriorityChange(tx: typeof prisma, tickets: TicketWithCreator[], membership: { userId: string; workspaceId: string }, nextPriority: string) {
+async function applyBulkPriorityChange(tx: TransactionClient, tickets: TicketBulkSelection[], membership: { userId: string; workspaceId: string }, nextPriority: TicketBulkSelection['priority']) {
   let updatedCount = 0;
   let noOpCount = 0;
 
@@ -299,7 +307,7 @@ async function applyBulkPriorityChange(tx: typeof prisma, tickets: TicketWithCre
 
     const updated = await tx.ticket.update({
       where: { id: ticket.id },
-      data: { priority: nextPriority },
+      data: { priority: nextPriority as TicketPriority },
       include: { createdBy: true, assignedTo: true, customer: true },
     });
 
@@ -318,7 +326,7 @@ async function applyBulkPriorityChange(tx: typeof prisma, tickets: TicketWithCre
   return { updatedCount, noOpCount };
 }
 
-async function applyBulkAddTag(tx: typeof prisma, tickets: TicketWithCreator[], membership: { userId: string; workspaceId: string }, tagId: string) {
+async function applyBulkAddTag(tx: TransactionClient, tickets: TicketBulkSelection[], membership: { userId: string; workspaceId: string }, tagId: string) {
   let updatedCount = 0;
   let noOpCount = 0;
 
@@ -351,7 +359,7 @@ async function applyBulkAddTag(tx: typeof prisma, tickets: TicketWithCreator[], 
   return { updatedCount, noOpCount };
 }
 
-async function applyBulkRemoveTag(tx: typeof prisma, tickets: TicketWithCreator[], membership: { userId: string; workspaceId: string }, tagId: string) {
+async function applyBulkRemoveTag(tx: TransactionClient, tickets: TicketBulkSelection[], membership: { userId: string; workspaceId: string }, tagId: string) {
   let updatedCount = 0;
   let noOpCount = 0;
 
@@ -389,53 +397,49 @@ async function applyBulkRemoveTag(tx: typeof prisma, tickets: TicketWithCreator[
   return { updatedCount, noOpCount };
 }
 
-export async function bulkUpdateTickets(payload: unknown): Promise<BulkUpdateResult> {
+export async function bulkUpdateTickets(payload: BulkActionInput): Promise<BulkUpdateResult> {
   const parsed = bulkActionSchema.parse(payload);
   const ticketIds = normalizeBulkTicketIds(parsed.ticketIds);
-  const uniqueTicketIds = ticketIds;
   const membership = await getCurrentMembership();
 
   assertBulkActionAllowed(parsed.action);
+  const value = validateBulkValue(parsed.action, parsed.value);
+  const statusValue = value as TicketStatus;
+  const priorityValue = value as TicketPriority;
 
   if (parsed.action === 'assign') {
-    assertBulkAssignPayload(parsed.value);
-    await assertAssigneeInWorkspace(parsed.value.assigneeId as string, membership.workspaceId);
-  }
-
-  if (parsed.action === 'status') {
-    assertBulkStatusPayload(parsed.value);
-  }
-
-  if (parsed.action === 'priority') {
-    assertBulkPriorityPayload(parsed.value);
+    await assertAssigneeInWorkspace(prisma, value, membership.workspaceId);
   }
 
   if (parsed.action === 'add_tag' || parsed.action === 'remove_tag') {
-    assertBulkTagPayload(parsed.value);
-    await assertTagInWorkspace(parsed.value.tagId as string, membership.workspaceId);
+    await assertTagInWorkspace(prisma, value, membership.workspaceId);
   }
 
-  const tickets = await loadBulkSelection(uniqueTicketIds, membership.workspaceId);
+  const tickets = await loadBulkSelection(ticketIds, membership.workspaceId);
 
-  return prisma.$transaction(async (tx) => {
+  if (parsed.action === 'status') {
+    await validateBulkStatusChange(tickets, statusValue);
+  }
+
+  return prisma.$transaction(async (tx: TransactionClient) => {
     if (parsed.action === 'assign') {
-      return applyBulkAssignment(tx, tickets, membership, parsed.value.assigneeId as string);
+      return applyBulkAssignment(tx, tickets, membership, value);
     }
 
     if (parsed.action === 'status') {
-      return applyBulkStatusChange(tx, tickets, membership, parsed.value.status as string);
+      return applyBulkStatusChange(tx, tickets, membership, statusValue);
     }
 
     if (parsed.action === 'priority') {
-      return applyBulkPriorityChange(tx, tickets, membership, parsed.value.priority as string);
+      return applyBulkPriorityChange(tx, tickets, membership, priorityValue);
     }
 
     if (parsed.action === 'add_tag') {
-      return applyBulkAddTag(tx, tickets, membership, parsed.value.tagId as string);
+      return applyBulkAddTag(tx, tickets, membership, value);
     }
 
     if (parsed.action === 'remove_tag') {
-      return applyBulkRemoveTag(tx, tickets, membership, parsed.value.tagId as string);
+      return applyBulkRemoveTag(tx, tickets, membership, value);
     }
 
     throw new BulkActionNotSupportedError();
