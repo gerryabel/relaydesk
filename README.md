@@ -11,6 +11,7 @@ This repository currently implements:
 - **Phase 2 — Internal Helpdesk MVP**: authenticated workspace provisioning, membership-scoped ticket REST API, ticket and message UI under `/dashboard`, authorization enforcement for unauthenticated/no-membership/cross-workspace access, and validation with Vitest coverage.
 - **Phase 3 — Productivity & UX**: ticket search by title/description, status and priority filters, sortable ticket lists, offset pagination, loading/error/empty states, accessibility and responsive improvements for ticket discovery and dashboard pages.
 - **Phase 4 — Ticket Workflow & Management**: ticket assignment, explicit workflow with validated transitions, priority and SLA foundation, search across title/description/creator/assignee, assignee filtering, sorting, offset pagination, and activity timeline. Version: `v0.3.0-alpha`.
+- **Phase 5 — Operational Helpdesk & Agent Productivity**: customer/contact management, customer ticket history and context, internal notes, tags/labels, SLA monitoring, my queue/agent queue, in-app notifications, bulk ticket actions, and message attachments. Version: `v0.4.0-alpha`.
 
 ## Stack
 
@@ -113,5 +114,5 @@ GitHub Actions workflow runs `npm ci`, `npm run lint`, `npm run typecheck`, and 
 - Redis is deferred until background jobs are introduced in a later phase.
 - Phase 3 focuses on ticket discovery and dashboard UX: search, filters, sorting, pagination, empty/loading/error states, accessibility, and responsive polish.
 - Phase 4 implements ticket workflow and management as `v0.3.0-alpha`, documented in `docs/phase-4/spec.md` and `docs/phase-4/task-*.md`.
-- Phase 5 Task 1 adds the Customer/Contact foundation: `/api/customers` and `/api/customers/[id]`, workspace-scoped customer records, and Prisma `Customer` model/migration.
+- Phase 5 implements operational helpdesk features as `v0.4.0-alpha`: customer/contact management, customer ticket history, internal notes, tags/labels, SLA monitoring, my queue/agent queue, in-app notifications, bulk ticket actions, and message attachments. Documented in `docs/phase-5/spec.md` and `docs/phase-5/task-*.md`.
 - `src/app/api/tickets/search/route.ts` provides a dedicated search API surface; `/dashboard/tickets` supports URL-synchronized search, filters, sort, and pagination.
