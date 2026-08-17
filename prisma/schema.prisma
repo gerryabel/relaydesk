@@ -105,6 +105,8 @@ enum TicketActivityType {
   TAG_ADDED
   TAG_REMOVED
   INTERNAL_NOTE_CREATED
+  ATTACHMENT_ADDED
+  ATTACHMENT_REMOVED
 }
 
 enum NotificationType {
@@ -216,6 +218,7 @@ model Message {
 
   ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   createdBy User?  @relation("MessageCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  attachments Attachment[]
 
   @@index([ticketId])
   @@index([createdById])
@@ -281,4 +284,18 @@ model Notification {
   @@index([userId, readAt, createdAt])
   @@index([workspaceId, createdAt])
   @@index([ticketId])
+}
+
+model Attachment {
+  id                String   @id @default(cuid())
+  messageId         String
+  originalFilename  String
+  mimeType          String
+  sizeBytes         Int
+  storageKey        String   @unique
+  createdAt         DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
 }

@@ -14,6 +14,7 @@ vi.mock('@/lib/db/prisma', () => {
     ticket: { findFirst: vi.fn() },
     message: { findMany: vi.fn(), create: vi.fn() },
     internalNote: { findMany: vi.fn() },
+    attachment: { findMany: vi.fn() },
   };
 
   return { prisma };

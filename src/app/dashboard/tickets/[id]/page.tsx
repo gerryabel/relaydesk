@@ -91,6 +91,28 @@ function formatSlaRemaining(deadline: Date | null, now: Date) {
   return `Overdue by ${overdueMins}m`;
 }
 
+function AttachmentChip({ attachment }: { attachment: { id: string; originalFilename: string; sizeBytes: number } }) {
+  const sizeLabel = attachment.sizeBytes < 1024
+    ? `${attachment.sizeBytes}B`
+    : attachment.sizeBytes < 1024 * 1024
+      ? `${Math.round(attachment.sizeBytes / 1024)}KB`
+      : `${(attachment.sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
+
+  return (
+    <a
+      href={`/api/attachments/${attachment.id}`}
+      className="inline-flex items-center gap-1 rounded-md border border-neutral-200 bg-neutral-50 px-2 py-1 text-xs text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+      download
+    >
+      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+      </svg>
+      <span className="max-w-[120px] truncate">{attachment.originalFilename}</span>
+      <span className="text-neutral-500 dark:text-neutral-400">{sizeLabel}</span>
+    </a>
+  );
+}
+
 function MessageItem({ message }: { message: MessageWithCreator }) {
   const author = message.createdBy?.name ?? 'Unknown';
   const createdAt = new Date(message.createdAt).toLocaleString('id-ID');
@@ -102,6 +124,13 @@ function MessageItem({ message }: { message: MessageWithCreator }) {
         <p className="text-xs text-neutral-500 dark:text-neutral-400">{createdAt}</p>
       </div>
       <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-900 dark:text-neutral-50">{message.body}</p>
+      {message.attachments && message.attachments.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {message.attachments.map((attachment) => (
+            <AttachmentChip key={attachment.id} attachment={attachment} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -33,6 +33,13 @@ export type MessageWithCreator = {
     createdAt: Date;
     updatedAt: Date;
   } | null;
+  attachments: Array<{
+    id: string;
+    originalFilename: string;
+    mimeType: string;
+    sizeBytes: number;
+    createdAt: Date;
+  }>;
 };
 
 export async function createMessage(ticketId: string, input: CreateMessageInput): Promise<MessageWithCreator> {
@@ -71,6 +78,15 @@ export async function createMessage(ticketId: string, input: CreateMessageInput)
           image: true,
           createdAt: true,
           updatedAt: true,
+        },
+      },
+      attachments: {
+        select: {
+          id: true,
+          originalFilename: true,
+          mimeType: true,
+          sizeBytes: true,
+          createdAt: true,
         },
       },
     },
@@ -115,6 +131,15 @@ export async function getMessages(ticketId: string): Promise<MessageWithCreator[
           image: true,
           createdAt: true,
           updatedAt: true,
+        },
+      },
+      attachments: {
+        select: {
+          id: true,
+          originalFilename: true,
+          mimeType: true,
+          sizeBytes: true,
+          createdAt: true,
         },
       },
     },
