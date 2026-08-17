@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { markNotificationAsRead, NotificationNotFoundError } from '@/lib/notifications/server';
+import { markNotificationAsRead } from '@/lib/notifications/server';
 import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
 
 export async function PATCH(
@@ -11,9 +11,6 @@ export async function PATCH(
     const notification = await markNotificationAsRead(resolved.id);
     return NextResponse.json(notification);
   } catch (error) {
-    if (error instanceof NotificationNotFoundError) {
-      return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
-    }
     if (error instanceof UnauthorizedError) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

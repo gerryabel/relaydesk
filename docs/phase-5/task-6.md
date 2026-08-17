@@ -114,7 +114,9 @@ No automatic cleanup is implemented in Task 6. Notifications remain stored unles
 ## Migration Details
 - New migration: `20260817045802_add_notifications`
 - Only introduces `NotificationType` enum, `Notification` model, and required indexes/relations.
-- Existing migrations were not modified or reordered.
+
+### Migration scope note
+Inspected migration history before finalizing Task 6. The notification migration also includes a `Ticket.assignedToId` index adjustment. That adjustment originates from schema/index evolution starting in `20260810000000_add_ticket_assignee`, not from Task 6 schema changes. It was detected during Task 6 migration generation and is documented here instead of being silently hidden or moved into older migrations.
 
 ## Non-Goals
 - No customer reply notifications
@@ -127,6 +129,7 @@ Service tests:
 - create `TICKET_ASSIGNED` and `TICKET_STATUS_CHANGED` notifications
 - no-op/self-notification guards
 - mark as read / idempotency
+- failure/atomicity cases: missing assignee membership, missing ticket, transaction rollback behavior
 
 Authorization tests:
 - cross-user visibility blocked

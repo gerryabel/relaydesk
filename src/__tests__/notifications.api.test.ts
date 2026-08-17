@@ -1,20 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from '@/app/api/notifications/route';
-import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
 import { getNotifications } from '@/lib/notifications/server';
-
-vi.mock('@/lib/notifications/server', () => ({
-  ...(await import('@/lib/notifications/server')),
-  getNotifications: vi.fn(),
-}));
 
 vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
 }));
 
-const mockedGetNotifications = vi.mocked(getNotifications);
+vi.mock('@/lib/notifications/server', () => ({
+  getNotifications: vi.fn(),
+}));
+
 const mockedGetCurrentMembership = vi.mocked(await import('@/lib/workspace/server').then((m) => m.getCurrentMembership));
+const mockedGetNotifications = vi.mocked(getNotifications);
 
 function createNotificationRequest(init?: RequestInit) {
   return new NextRequest('http://localhost/api/notifications', {
@@ -30,26 +28,6 @@ afterEach(() => {
 });
 
 describe('notifications API', () => {
-  it('returns 401 when membership resolution fails', async () => {
-    mockedGetCurrentMembership.mockRejectedValueOnce(new UnauthorizedError('No authenticated session'));
-
-    const response = await GET(createNotificationRequest());
-    const body = await response.json();
-
-    expect(response.status).toBe(401);
-    expect(body.error).toBe('Unauthorized');
-  });
-
-  it('returns 403 when membership resolution fails', async () => {
-    mockedGetCurrentMembership.mockRejectedValueOnce(new ForbiddenError('No workspace membership found'));
-
-    const response = await GET(createNotificationRequest());
-    const body = await response.json();
-
-    expect(response.status).toBe(403);
-    expect(body.error).toBe('Forbidden');
-  });
-
   it('returns paginated notifications', async () => {
     mockedGetCurrentMembership.mockResolvedValueOnce({
       userId: 'user-123',

@@ -164,9 +164,13 @@ describe('ticket services', () => {
       const txClient = {
         ticket: {
           update: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Baru', status: 'in_progress' } as never),
+          findFirst: vi.fn().mockResolvedValue({ ...fakeTicket, title: 'Judul Tiket', status: 'open' } as never),
         },
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+        notification: {
+          create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never),
         },
       } as never;
 

@@ -1,5 +1,4 @@
 import { prisma } from '@/lib/db/prisma';
-import { getCurrentMembership } from '@/lib/workspace/server';
 import {
   createNotification as schemaCreateNotification,
   getNotifications as schemaGetNotifications,
@@ -56,28 +55,23 @@ export async function createTicketAssignedNotification({
     return;
   }
 
-  const membership = await getCurrentMembership();
-
-  if (membership.workspaceId !== workspaceId) {
-    return;
-  }
-
-  const assigneeMembership = await prisma.membership.findFirst({
-    where: { userId: assigneeId, workspaceId },
-    select: { id: true },
-  });
+  const [assigneeMembership, ticket] = await Promise.all([
+    tx.membership.findFirst({
+      where: { userId: assigneeId, workspaceId },
+      select: { id: true },
+    }),
+    tx.ticket.findFirst({
+      where: { id: ticketId, workspaceId },
+      select: { id: true, title: true },
+    }),
+  ]);
 
   if (!assigneeMembership) {
-    return;
+    throw new Error(`Assignee ${assigneeId} is not in workspace ${workspaceId}`);
   }
 
-  const ticket = await prisma.ticket.findFirst({
-    where: { id: ticketId, workspaceId },
-    select: { id: true, title: true },
-  });
-
   if (!ticket) {
-    return;
+    throw new Error(`Ticket ${ticketId} not found in workspace ${workspaceId}`);
   }
 
   await tx.notification.create({
@@ -103,23 +97,20 @@ export async function createTicketStatusChangedNotification({
   workspaceId: string;
   tx?: typeof prisma | TransactionClient;
 }): Promise<void> {
-  const membership = await getCurrentMembership();
-
-  if (membership.workspaceId !== workspaceId) {
-    return;
-  }
-
-  const ticket = await prisma.ticket.findFirst({
+  const ticket = await tx.ticket.findFirst({
     where: { id: ticketId, workspaceId },
     select: { id: true, title: true, status: true, assignedToId: true },
   });
 
-  if (!ticket || !ticket.assignedToId || actorId === ticket.assignedToId) {
+  if (!ticket) {
+    throw new Error(`Ticket ${ticketId} not found in workspace ${workspaceId}`);
+  }
+
+  if (!ticket.assignedToId || actorId === ticket.assignedToId) {
     return;
   }
 
   const statusLabel = ticket.status.replace('_', ' ');
-
   await tx.notification.create({
     data: {
       userId: ticket.assignedToId,
