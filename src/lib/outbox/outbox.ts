@@ -1,11 +1,6 @@
 import type { Prisma } from '@/generated/prisma';
 
-export type OutboxEventType =
-  | 'TICKET_CREATED'
-  | 'TICKET_ASSIGNED'
-  | 'TICKET_REPLIED'
-  | 'TICKET_RESOLVED'
-  | 'SLA_AT_RISK';
+export type OutboxEventType = 'TICKET_ASSIGNED';
 
 export type OutboxAggregateType = 'Ticket';
 
