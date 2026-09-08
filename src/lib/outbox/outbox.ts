@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma';
-import type { OutboxEventType, OutboxAggregateType, OutboxPayload, OutboxEventRecord, DispatchOutboxEventInput } from './types';
+import type { OutboxEventType, OutboxAggregateType, OutboxEventRecord } from './types';
 
 const DispatchInputSchema = z.object({
   eventType: z.custom<OutboxEventType>((val) => typeof val === 'string'),

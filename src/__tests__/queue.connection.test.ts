@@ -18,6 +18,8 @@ vi.mock("ioredis", () => {
       this.quit = vi.fn().mockResolvedValue(undefined);
       // @ts-expect-error - test mock
       this.status = "ready";
+      // @ts-expect-error - test mock
+      this.on = vi.fn();
     },
   };
 });
