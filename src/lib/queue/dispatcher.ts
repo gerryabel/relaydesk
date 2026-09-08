@@ -1,9 +1,8 @@
-import { getQueue } from './producer';
-import { OutboxJobSchema, type OutboxJobData } from './job-types';
+import { OutboxJobSchema } from './job-types';
 
 export async function enqueueOutboxJob(
   event: { id: string; eventType: string; aggregateType: string; aggregateId: string; payload: Record<string, unknown> },
-  queue: { add: (name: string, data: unknown, opts?: unknown) => Promise<{ id: string }> },
+  queue: { add: (name: string, data: unknown, opts?: { attempts: number }) => Promise<{ id: string }> },
 ) {
   const data = OutboxJobSchema.parse({
     outboxEventId: event.id,
@@ -18,8 +17,6 @@ export async function enqueueOutboxJob(
 }
 
 export async function dispatchNextOutboxEvent() {
-  const queue = getQueue();
-
   // Task 3 stub: dispatcher loop will be implemented here.
   return { dispatched: false };
 }
