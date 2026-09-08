@@ -7,8 +7,13 @@ const client = new Client({
   connectionString: process.env.DATABASE_URL,
 });
 
-const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
-  maxRetriesPerRequest: null,
+if (!process.env.REDIS_URL) {
+  console.error("Redis check failed: REDIS_URL is not set");
+  process.exit(1);
+}
+
+const redis = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: 1,
 });
 
 let hasFailure = false;
@@ -17,7 +22,7 @@ try {
   await client.connect();
   console.log("PostgreSQL OK");
 } catch (error) {
-  console.error("PostgreSQL check failed:", error.message);
+  console.error("PostgreSQL check failed:", error instanceof Error ? error.message : error);
   hasFailure = true;
 } finally {
   await client.end().catch(() => {});
@@ -32,12 +37,12 @@ try {
     hasFailure = true;
   }
 } catch (error) {
-  console.error("Redis check failed:", error.message);
+  console.error("Redis check failed:", error instanceof Error ? error.message : error);
   hasFailure = true;
 } finally {
   await redis.quit().catch(() => {});
 }
 
 if (hasFailure) {
-  process.exitCode = 1;
+  process.exit(1);
 }

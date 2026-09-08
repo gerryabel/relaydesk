@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { QUEUE_NAMES, getBullMQQueueName } from "@/lib/queue/config";
 
 vi.mock("@/lib/env", () => ({
   env: {
@@ -29,13 +30,12 @@ describe("queue producer", () => {
     (global as any).queueRedis = undefined;
   });
 
-  it("returns a Queue instance for the primary queue", async () => {
+  it("creates a BullMQ queue from the shared logical queue name", async () => {
     const { getQueue } = await import("@/lib/queue/producer");
-    const { QUEUE_NAMES } = await import("@/lib/queue/config");
 
     const queue = getQueue();
     expect(queue).toBeDefined();
-    expect(queue.name).toBe(QUEUE_NAMES.primary);
+    expect(queue.name).toBe(getBullMQQueueName(QUEUE_NAMES.primary));
   });
 
   it("reuses the same Queue instance on subsequent calls", async () => {
@@ -45,5 +45,25 @@ describe("queue producer", () => {
     const second = getQueue();
 
     expect(first).toBe(second);
+  });
+});
+
+describe("queue config/producer contract", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (global as any).queueRedis = undefined;
+  });
+
+  it("derives its BullMQ queue name from the shared queue config", async () => {
+    const { getQueue } = await import("@/lib/queue/producer");
+
+    expect(getQueue().name).toBe(getBullMQQueueName(QUEUE_NAMES.primary));
+  });
+
+  it("does not preserve the legacy hyphenated queue name as a hardcoded string", async () => {
+    const { getQueue } = await import("@/lib/queue/producer");
+
+    expect(getQueue().name).not.toBe(QUEUE_NAMES.primary);
   });
 });
