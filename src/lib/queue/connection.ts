@@ -6,9 +6,12 @@ declare global {
   var queueRedis: Redis | undefined;
 }
 
-export const queueRedis: Redis =
-  global.queueRedis ?? new Redis(env.REDIS_URL, DEFAULT_CONNECTION_OPTIONS);
+export function getQueueRedis(): Redis {
+  if (!global.queueRedis) {
+    global.queueRedis = new Redis(env.REDIS_URL, DEFAULT_CONNECTION_OPTIONS);
+  }
 
-if (process.env.NODE_ENV !== "production") {
-  global.queueRedis = queueRedis;
+  return global.queueRedis;
 }
+
+export const queueRedis: Redis = getQueueRedis();
