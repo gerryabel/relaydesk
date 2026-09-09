@@ -306,8 +306,11 @@ model SentEmail {
   outboxEventId  String   @unique
   recipient      String
   sentAt         DateTime @default(now())
+  status         String   @default("SENT")
+  claimedAt      DateTime?
 
   @@index([outboxEventId])
+  @@index([claimedAt])
 }
 
 model Attachment {
