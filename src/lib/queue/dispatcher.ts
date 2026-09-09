@@ -1,8 +1,9 @@
 import { OutboxJobSchema } from './job-types';
+import { EMAIL_RETRY_POLICY } from './retry-policy';
 
 export async function enqueueOutboxJob(
   event: { id: string; eventType: string; aggregateType: string; aggregateId: string; payload: Record<string, unknown> },
-  queue: { add: (name: string, data: unknown, opts?: { attempts: number }) => Promise<{ id: string }> },
+  queue: { add: (name: string, data: unknown, opts?: { attempts?: number; backoff?: { type?: 'fixed' | 'exponential'; delay?: number } }) => Promise<{ id: string }> },
 ) {
   const data = OutboxJobSchema.parse({
     outboxEventId: event.id,
@@ -13,7 +14,15 @@ export async function enqueueOutboxJob(
     attempt: 0,
   });
 
-  return queue.add('outbox-event', data, { attempts: 3 });
+  const backoffType = EMAIL_RETRY_POLICY.backoffType === 'exponential' ? 'exponential' : 'fixed';
+  const backoff = backoffType === 'exponential'
+    ? { type: 'exponential' as const, delay: EMAIL_RETRY_POLICY.backoffDelayMs }
+    : { type: 'fixed' as const, delay: EMAIL_RETRY_POLICY.backoffDelayMs };
+
+  return queue.add('outbox-event', data, {
+    attempts: EMAIL_RETRY_POLICY.maxAttempts,
+    backoff,
+  });
 }
 
 export async function dispatchNextOutboxEvent() {

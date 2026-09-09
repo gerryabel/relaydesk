@@ -1,11 +1,27 @@
 import { prisma } from '@/lib/db/prisma';
-import { sendEmail, parseEmailProviderConfig } from '@/lib/email';
+import { parseEmailProviderConfig, sendEmail } from '@/lib/email';
 import { validateEmailMessage } from '@/lib/email/message';
 import { classifyProviderError } from '@/lib/email/errors';
+import { RetryableError, PermanentError, classifyDeliveryResult } from '@/lib/queue/errors';
 import type { OutboxEventRecord } from '@/lib/outbox/types';
 import type { OutboxHandlerResult } from '@/lib/queue/handlers/types';
 
-export async function handleEmailOutboxEvent(event: OutboxEventRecord): Promise<OutboxHandlerResult> {
+export async function getSentEmail(outboxEventId: string) {
+  // @ts-expect-error Prisma client is stale until prisma generate after migration
+  return prisma.sentEmail.findUnique({
+    where: { outboxEventId },
+    select: { outboxEventId: true, recipient: true, sentAt: true },
+  });
+}
+
+export async function markEmailSent(outboxEventId: string, recipient: string) {
+  // @ts-expect-error Prisma client is stale until prisma generate after migration
+  await prisma.sentEmail.create({
+    data: { outboxEventId, recipient },
+  });
+}
+
+export async function sendEmailForOutboxEvent(event: OutboxEventRecord): Promise<OutboxHandlerResult> {
   if (event.eventType !== 'TICKET_ASSIGNED' || event.aggregateType !== 'Ticket' || event.aggregateId !== event.payload?.ticketId) {
     return {
       status: 'failure',
@@ -61,6 +77,11 @@ export async function handleEmailOutboxEvent(event: OutboxEventRecord): Promise<
     };
   }
 
+  const existingDelivery = await getSentEmail(event.id);
+  if (existingDelivery) {
+    return { status: 'success' };
+  }
+
   const message = validateEmailMessage({
     to: assignee.email,
     subject: `Ticket assigned: ${ticket.title}`,
@@ -75,8 +96,8 @@ export async function handleEmailOutboxEvent(event: OutboxEventRecord): Promise<
   });
 
   const result = await sendEmail(config, message);
-
   if (result.status === 'success') {
+    await markEmailSent(event.id, message.to);
     return { status: 'success' };
   }
 
@@ -84,11 +105,39 @@ export async function handleEmailOutboxEvent(event: OutboxEventRecord): Promise<
     ? classifyProviderError(new Error(result.error.message))
     : classifyProviderError(new Error('Email provider failed'));
 
-  return {
-    status: providerError.retryable ? 'failure' : 'failure',
-    error: {
-      message: providerError.message,
-      retryable: providerError.retryable,
-    },
-  };
+  if (!providerError.retryable) {
+    return {
+      status: 'failure',
+      error: {
+        message: providerError.message,
+        retryable: false,
+      },
+    };
+  }
+
+  throw classifyDeliveryResult(result);
 }
+
+export function wrapHandlerResult(result: unknown): OutboxHandlerResult | never {
+  if (typeof result !== 'object' || result === null || !('status' in result)) {
+    throw new PermanentError('Handler returned an unsupported result');
+  }
+
+  const typed = result as { status: string; error?: { message?: string; retryable?: boolean } };
+
+  if (typed.status === 'success') {
+    return { status: 'success' };
+  }
+
+  if (typed.status !== 'failure' || !typed.error) {
+    throw new PermanentError('Handler returned an unsupported failure result');
+  }
+
+  if (typed.error.retryable) {
+    throw new RetryableError(typed.error.message ?? 'Retryable handler failure');
+  }
+
+  throw new PermanentError(typed.error.message ?? 'Permanent handler failure');
+}
+
+export const handleEmailOutboxEvent = sendEmailForOutboxEvent;

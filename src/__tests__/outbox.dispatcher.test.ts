@@ -124,7 +124,7 @@ describe('outbox completion helpers', () => {
 
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith({
       where: { id: 'outbox-1' },
-      data: { processedAt: expect.any(Date) },
+      data: { processedAt: expect.any(Date), lastError: null },
     });
   });
 
