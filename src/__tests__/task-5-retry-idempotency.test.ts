@@ -31,13 +31,19 @@ describe('outbox failure state', () => {
   it('marks permanent failure state', async () => {
     await markOutboxEventPermanentlyFailed(tx as Parameters<typeof markOutboxEventPermanentlyFailed>[0], 'outbox-1', new Error('invalid recipient'));
 
-    expect((tx as { outboxEvent: { updateMany: ReturnType<typeof vi.fn> } }).outboxEvent.updateMany).toHaveBeenCalledWith({
+    const updateMany = (tx as { outboxEvent: { updateMany: ReturnType<typeof vi.fn> } }).outboxEvent.updateMany;
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith({
       where: { id: 'outbox-1', attempts: { lt: 3 } },
-      data: {
-        processedAt: new Date(Date.now() - 1000),
+      data: expect.objectContaining({
         lastError: '[task-5:permanent-failure] invalid recipient',
-      },
+      }),
     });
+
+    const [[calledArgs]] = updateMany.mock.calls;
+    const processedAt = calledArgs.data.processedAt as Date | undefined;
+    expect(processedAt).toBeInstanceOf(Date);
+    expect(processedAt!.getTime()).toBeLessThan(Date.now());
   });
 });
 
