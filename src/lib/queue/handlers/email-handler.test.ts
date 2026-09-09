@@ -111,9 +111,9 @@ describe('email handler idempotency', () => {
     const duplicateUniqueError = new Error('duplicate key') as Error & { code?: string };
     duplicateUniqueError.code = 'P2002';
 
-    mockedPrisma.ticket.findFirst.mockResolvedValueOnce({ id: 'ticket-1', title: 'Judul Tiket' } as never);
-    mockedPrisma.user.findFirst.mockResolvedValueOnce({ id: 'user-456', email: 'assignee@example.com', name: 'Assignee' } as never);
-    mockedPrisma.sentEmail.findFirst.mockResolvedValueOnce(null as never);
+    mockedPrisma.ticket.findFirst.mockResolvedValue({ id: 'ticket-1', title: 'Judul Tiket' } as never);
+    mockedPrisma.user.findFirst.mockResolvedValue({ id: 'user-456', email: 'assignee@example.com', name: 'Assignee' } as never);
+    mockedPrisma.sentEmail.findFirst.mockResolvedValue(null as never);
     mockedPrisma.sentEmail.create
       .mockRejectedValueOnce(duplicateUniqueError)
       .mockRejectedValueOnce(duplicateUniqueError);
@@ -124,9 +124,32 @@ describe('email handler idempotency', () => {
 
     expect(firstResult.status).toBe('success');
     expect(secondResult.status).toBe('success');
-    expect(mockedSendEmail).toHaveBeenCalledTimes(0);
+    expect(mockedSendEmail).not.toHaveBeenCalled();
     expect(mockedPrisma.sentEmail.create).toHaveBeenCalledTimes(2);
     expect(mockedPrisma.sentEmail.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('allows only one provider call when one claim wins and the other loses', async () => {
+    const duplicateUniqueError = new Error('duplicate key') as Error & { code?: string };
+    duplicateUniqueError.code = 'P2002';
+
+    mockedPrisma.ticket.findFirst.mockResolvedValue({ id: 'ticket-1', title: 'Judul Tiket' } as never);
+    mockedPrisma.user.findFirst.mockResolvedValue({ id: 'user-456', email: 'assignee@example.com', name: 'Assignee' } as never);
+    mockedPrisma.sentEmail.findFirst.mockResolvedValue(null as never);
+    mockedPrisma.sentEmail.create
+      .mockResolvedValueOnce({ outboxEventId: 'outbox-email-1', recipient: 'assignee@example.com', sentAt: new Date() } as never)
+      .mockRejectedValueOnce(duplicateUniqueError);
+    successProvider();
+
+    const firstHandler = handleEmailOutboxEvent(fakeOutboxEvent as never);
+    const secondHandler = handleEmailOutboxEvent(fakeOutboxEvent as never);
+    const [firstResult, secondResult] = await Promise.all([firstHandler, secondHandler]);
+
+    expect(firstResult.status).toBe('success');
+    expect(secondResult.status).toBe('success');
+    expect(mockedSendEmail).toHaveBeenCalledTimes(1);
+    expect(mockedPrisma.sentEmail.create).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.sentEmail.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('recovers from stale sending claim and completes delivery', async () => {
@@ -156,10 +179,10 @@ describe('email handler idempotency', () => {
     mockedPrisma.sentEmail.create.mockResolvedValueOnce({ outboxEventId: 'outbox-email-1', recipient: 'assignee@example.com', sentAt: new Date() } as never);
     mockedSendEmail.mockResolvedValueOnce({ status: 'retryable_failure', error: { code: 'RETRYABLE_FAILURE', message: 'timeout', retryable: true } });
 
-    const result = await handleEmailOutboxEvent(fakeOutboxEvent as never);
+    await expect(
+      handleEmailOutboxEvent(fakeOutboxEvent as never),
+    ).rejects.toThrow('timeout');
 
-    expect(result.status).toBe('failure');
-    expect((result as { error?: { retryable?: boolean } }).error?.retryable).toBe(true);
     expect(mockedPrisma.sentEmail.updateMany).not.toHaveBeenCalled();
     expect(mockedPrisma.sentEmail.deleteMany).toHaveBeenCalledWith({
       where: { outboxEventId: 'outbox-email-1', status: SENDING_STATUS },
@@ -177,7 +200,13 @@ describe('email handler idempotency', () => {
 
     expect(result.status).toBe('failure');
     expect((result as { error?: { retryable?: boolean } }).error?.retryable).toBe(false);
-    expect(mockedPrisma.sentEmail.deleteMany).toHaveBeenCalledTimes(1);
     expect(mockedPrisma.sentEmail.updateMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.sentEmail.deleteMany).toHaveBeenCalledTimes(2);
+    expect(mockedPrisma.sentEmail.deleteMany).toHaveBeenNthCalledWith(1, {
+      where: { outboxEventId: 'outbox-email-1', status: SENDING_STATUS, claimedAt: { lt: expect.any(Date) } },
+    });
+    expect(mockedPrisma.sentEmail.deleteMany).toHaveBeenNthCalledWith(2, {
+      where: { outboxEventId: 'outbox-email-1', status: SENDING_STATUS },
+    });
   });
 });
