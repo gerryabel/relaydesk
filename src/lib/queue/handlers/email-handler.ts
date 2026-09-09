@@ -6,18 +6,55 @@ import { RetryableError, PermanentError, classifyDeliveryResult } from '@/lib/qu
 import type { OutboxEventRecord } from '@/lib/outbox/types';
 import type { OutboxHandlerResult } from '@/lib/queue/handlers/types';
 
+export const SENDING_STATUS = 'SENDING' as const;
+export const SENT_STATUS = 'SENT' as const;
+export const STALE_SEND_CLAIM_MS = 5 * 60 * 1000;
+
 export async function getSentEmail(outboxEventId: string) {
   // @ts-expect-error Prisma client is stale until prisma generate after migration
-  return prisma.sentEmail.findUnique({
-    where: { outboxEventId },
+  return prisma.sentEmail.findFirst({
+    where: { outboxEventId, status: SENT_STATUS },
     select: { outboxEventId: true, recipient: true, sentAt: true },
   });
 }
 
-export async function markEmailSent(outboxEventId: string, recipient: string) {
+async function claimEmailSend(outboxEventId: string, recipient: string) {
+  const staleBefore = new Date(Date.now() - STALE_SEND_CLAIM_MS);
   // @ts-expect-error Prisma client is stale until prisma generate after migration
-  await prisma.sentEmail.create({
-    data: { outboxEventId, recipient },
+  await prisma.sentEmail.deleteMany({
+    where: { outboxEventId, status: SENDING_STATUS, claimedAt: { lt: staleBefore } },
+  });
+
+  try {
+    // @ts-expect-error Prisma client is stale until prisma generate after migration
+    await prisma.sentEmail.create({
+      data: { outboxEventId, recipient, status: SENDING_STATUS, claimedAt: new Date() },
+    });
+    return { claimed: true };
+  } catch (error) {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: string }).code === 'P2002'
+    ) {
+      return { claimed: false };
+    }
+    throw error;
+  }
+}
+
+async function markEmailSent(outboxEventId: string) {
+  // @ts-expect-error Prisma client is stale until prisma generate after migration
+  await prisma.sentEmail.updateMany({
+    where: { outboxEventId, status: SENDING_STATUS },
+    data: { status: SENT_STATUS, sentAt: new Date() },
+  });
+}
+
+async function releaseEmailClaim(outboxEventId: string) {
+  // @ts-expect-error Prisma client is stale until prisma generate after migration
+  await prisma.sentEmail.deleteMany({
+    where: { outboxEventId, status: SENDING_STATUS },
   });
 }
 
@@ -92,30 +129,59 @@ export async function sendEmailForOutboxEvent(event: OutboxEventRecord): Promise
   const config = parseEmailProviderConfig({
     provider: process.env.EMAIL_PROVIDER ?? 'console',
     from: process.env.EMAIL_FROM ?? 'RelayDesk <no-reply@example.com>',
-    resendApiKey: process.env.RESEND_API_KEY,
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
   });
 
-  const result = await sendEmail(config, message);
-  if (result.status === 'success') {
-    await markEmailSent(event.id, message.to);
+  const claim = await claimEmailSend(event.id, message.to);
+  if (!claim.claimed) {
+    const sentAfterClaim = await getSentEmail(event.id);
+    if (sentAfterClaim) {
+      return { status: 'success' };
+    }
+
     return { status: 'success' };
   }
 
-  const providerError = result.error
-    ? classifyProviderError(new Error(result.error.message))
-    : classifyProviderError(new Error('Email provider failed'));
+  try {
+    const providerResult = await sendEmail(config, message);
+    if (providerResult.status === 'success') {
+      await markEmailSent(event.id);
+      return { status: 'success' };
+    }
 
-  if (!providerError.retryable) {
-    return {
-      status: 'failure',
-      error: {
-        message: providerError.message,
-        retryable: false,
-      },
-    };
+    const providerError = providerResult.error
+      ? classifyProviderError(new Error(providerResult.error.message))
+      : classifyProviderError(new Error('Email provider failed'));
+
+    if (!providerError.retryable) {
+      await releaseEmailClaim(event.id);
+      return {
+        status: 'failure',
+        error: {
+          message: providerError.message,
+          retryable: false,
+        },
+      };
+    }
+
+    await releaseEmailClaim(event.id);
+    throw classifyDeliveryResult(providerResult);
+  } catch (error) {
+    await releaseEmailClaim(event.id);
+
+    const classification = classifyProviderError(error);
+    if (!classification.retryable) {
+      return {
+        status: 'failure',
+        error: {
+          message: classification.message,
+          retryable: false,
+        },
+      };
+    }
+
+    throw new RetryableError(classification.message);
   }
-
-  throw classifyDeliveryResult(result);
 }
 
 export function wrapHandlerResult(result: unknown): OutboxHandlerResult | never {

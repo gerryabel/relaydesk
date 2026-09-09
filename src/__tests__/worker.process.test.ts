@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processOutboxJob } from '@/lib/queue/worker';
-import { claimNextOutboxEvent } from '@/lib/outbox/outbox';
+import { claimNextOutboxEvent, markOutboxEventProcessed, recordOutboxFailure } from '@/lib/outbox/outbox';
 import { getHandler } from '@/lib/queue/handlers/registry';
 
 vi.mock('@/lib/outbox/outbox', () => ({
   claimNextOutboxEvent: vi.fn(),
   markOutboxEventProcessed: vi.fn(),
-  markOutboxEventFailed: vi.fn(),
   recordOutboxFailure: vi.fn(),
 }));
 
@@ -39,6 +38,8 @@ describe('worker', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.mocked(claimNextOutboxEvent).mockReset();
+    vi.mocked(markOutboxEventProcessed).mockReset();
+    vi.mocked(recordOutboxFailure).mockReset();
     vi.mocked(getHandler).mockReset();
   });
 
@@ -58,6 +59,50 @@ describe('worker', () => {
 
     expect(result.handled).toBe(true);
     expect(handler).toHaveBeenCalledWith(validEvent);
+    expect(recordOutboxFailure).not.toHaveBeenCalled();
+  });
+
+  it('records handler failure exactly once for retryable failures', async () => {
+    vi.mocked(claimNextOutboxEvent).mockResolvedValue({
+      event: validEvent,
+      claimed: true,
+    });
+
+    const handler = vi.fn().mockResolvedValue({
+      status: 'failure',
+      error: { message: 'handler failed', retryable: true },
+    });
+    vi.mocked(getHandler).mockReturnValue(handler);
+
+    await expect(
+      processOutboxJob({
+        id: 'job-1',
+        data: validJobPayload,
+      }),
+    ).rejects.toThrow('handler failed');
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(recordOutboxFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('records thrown handler failure once', async () => {
+    vi.mocked(claimNextOutboxEvent).mockResolvedValue({
+      event: validEvent,
+      claimed: true,
+    });
+
+    const handler = vi.fn().mockRejectedValue(new Error('handler failed'));
+    vi.mocked(getHandler).mockReturnValue(handler);
+
+    await expect(
+      processOutboxJob({
+        id: 'job-1',
+        data: validJobPayload,
+      }),
+    ).rejects.toThrow('Outbox job failed for TICKET_ASSIGNED outbox-1: handler failed');
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(recordOutboxFailure).toHaveBeenCalledTimes(1);
   });
 
   it('rejects invalid job payload', async () => {
@@ -104,22 +149,6 @@ describe('worker', () => {
     });
 
     expect(result.handled).toBe(false);
-  });
-
-  it('marks event as failed when handler throws', async () => {
-    vi.mocked(claimNextOutboxEvent).mockResolvedValue({
-      event: validEvent,
-      claimed: true,
-    });
-
-    const handler = vi.fn().mockRejectedValue(new Error('handler failed'));
-    vi.mocked(getHandler).mockReturnValue(handler);
-
-    await expect(
-      processOutboxJob({
-        id: 'job-1',
-        data: validJobPayload,
-      }),
-    ).rejects.toThrow('Outbox job failed for TICKET_ASSIGNED outbox-1: handler failed');
+    expect(recordOutboxFailure).not.toHaveBeenCalled();
   });
 });

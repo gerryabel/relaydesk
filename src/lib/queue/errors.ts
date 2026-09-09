@@ -33,7 +33,11 @@ export function classifyDeliveryResult(result: EmailDeliveryResult): Error {
     return asPermanent('Email provider accepted message unexpectedly');
   }
 
-  if (result.status === 'retryable_failure' || result.status === 'invalid_message') {
+  if (result.status === 'invalid_message') {
+    return asPermanent(result.error?.message ?? 'Email provider rejected the message');
+  }
+
+  if (result.status === 'retryable_failure') {
     return asRetryable(result.error?.message ?? 'Email provider retryable failure');
   }
 
