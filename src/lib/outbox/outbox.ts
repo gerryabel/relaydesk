@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PermanentError } from '@/lib/queue/errors';
 import type { Prisma } from '@/generated/prisma';
 import type { OutboxEventType, OutboxAggregateType, OutboxEventRecord } from './types';
 
@@ -99,21 +100,51 @@ export async function markOutboxEventProcessed(
 ): Promise<void> {
   await tx.outboxEvent.updateMany({
     where: { id: outboxEventId },
-    data: { processedAt: new Date() },
+    data: { processedAt: new Date(), lastError: null },
   });
 }
 
+export async function markOutboxEventPermanentlyFailed(
+  tx: Prisma.TransactionClient,
+  outboxEventId: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  await tx.outboxEvent.updateMany({
+    where: { id: outboxEventId, attempts: { lt: 3 } },
+    data: {
+      processedAt: new Date(Date.now() - 1000),
+      lastError: `[task-5:permanent-failure] ${message}`,
+    },
+  });
+}
+
+export async function recordOutboxFailure(
+  tx: Prisma.TransactionClient,
+  outboxEventId: string,
+  error: unknown,
+): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  const isPermanent = error instanceof PermanentError;
+
+  await tx.outboxEvent.updateMany({
+    where: { id: outboxEventId },
+    data: {
+      processedAt: isPermanent ? new Date(Date.now() - 1000) : null,
+      attempts: { increment: 1 },
+      lastError: isPermanent ? `[task-5:permanent-failure] ${message}` : message,
+    },
+  });
+}
+
+/**
+ * @deprecated Use `recordOutboxFailure` for new code.
+ * Kept for backward compatibility with existing Task 3/4 tests.
+ */
 export async function markOutboxEventFailed(
   tx: Prisma.TransactionClient,
   outboxEventId: string,
   error: unknown,
 ): Promise<void> {
-  await tx.outboxEvent.updateMany({
-    where: { id: outboxEventId },
-    data: {
-      processedAt: null,
-      attempts: { increment: 1 },
-      lastError: error instanceof Error ? error.message : String(error),
-    },
-  });
+  await recordOutboxFailure(tx, outboxEventId, error);
 }

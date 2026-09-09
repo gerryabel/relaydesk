@@ -7,6 +7,7 @@ vi.mock('@/lib/outbox/outbox', () => ({
   claimNextOutboxEvent: vi.fn(),
   markOutboxEventProcessed: vi.fn(),
   markOutboxEventFailed: vi.fn(),
+  recordOutboxFailure: vi.fn(),
 }));
 
 vi.mock('@/lib/queue/handlers/registry', () => ({
@@ -119,6 +120,6 @@ describe('worker', () => {
         id: 'job-1',
         data: validJobPayload,
       }),
-    ).rejects.toThrow('handler failed');
+    ).rejects.toThrow('Outbox job failed for TICKET_ASSIGNED outbox-1: handler failed');
   });
 });

@@ -301,6 +301,15 @@ model OutboxEvent {
   @@index([aggregateType, aggregateId])
 }
 
+model SentEmail {
+  id             String   @id @default(cuid())
+  outboxEventId  String   @unique
+  recipient      String
+  sentAt         DateTime @default(now())
+
+  @@index([outboxEventId])
+}
+
 model Attachment {
   id                String   @id @default(cuid())
   messageId         String
