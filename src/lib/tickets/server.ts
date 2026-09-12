@@ -13,6 +13,7 @@ import {
   createTicketAssignedNotification,
   createTicketStatusChangedNotification,
 } from '@/lib/notifications/server';
+import { createOutboxEvent } from '@/lib/outbox/outbox';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -526,6 +527,22 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
         tx,
       });
     }
+
+    await createOutboxEvent(
+      {
+        eventType: 'TICKET_ASSIGNED',
+        aggregateType: 'Ticket',
+        aggregateId: updated.id,
+        payload: {
+          workspaceId: membership.workspaceId,
+          ticketId: updated.id,
+          actorId: membership.userId,
+          assigneeId: updated.assignedToId,
+          previousAssigneeId: existing.assignedToId,
+        },
+      },
+      tx,
+    );
 
     return updated as TicketWithCreator;
   });

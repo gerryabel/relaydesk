@@ -96,11 +96,32 @@ npm run self-check
 
 ## Infrastructure Check
 
-Verify local PostgreSQL connectivity:
+Verify local connectivity:
 
 ```bash
 npm run infra:check
 ```
+
+Expected results:
+- PostgreSQL connectivity success: `PostgreSQL OK`
+- Redis connectivity success: `Redis OK`
+- Missing `REDIS_URL`: command exits non-zero
+- Unreachable Redis: command exits non-zero
+
+## Worker
+
+Start the background worker:
+
+```bash
+npm run worker
+```
+
+Stop the worker with `Ctrl+C` or by sending `SIGTERM`/`SIGINT` to the process.
+
+Behavior notes:
+- Worker uses `REDIS_URL` from `.env`.
+- If Redis is unavailable, the worker attempts to connect once and exits non-zero if startup readiness fails.
+- Graceful shutdown closes the BullMQ worker and Redis connection before exiting.
 
 ## CI
 

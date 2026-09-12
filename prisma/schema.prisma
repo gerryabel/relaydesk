@@ -286,6 +286,35 @@ model Notification {
   @@index([ticketId])
 }
 
+model OutboxEvent {
+  id            String    @id @default(cuid())
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  createdAt     DateTime  @default(now())
+  processedAt   DateTime?
+  completedAt   DateTime?
+  failedAt      DateTime?
+  attempts      Int       @default(0)
+  lastError     String?
+
+  @@index([processedAt, createdAt])
+  @@index([aggregateType, aggregateId])
+}
+
+model SentEmail {
+  id             String   @id @default(cuid())
+  outboxEventId  String   @unique
+  recipient      String
+  sentAt         DateTime @default(now())
+  status         String   @default("SENT")
+  claimedAt      DateTime?
+
+  @@index([outboxEventId])
+  @@index([claimedAt])
+}
+
 model Attachment {
   id                String   @id @default(cuid())
   messageId         String
