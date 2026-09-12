@@ -2,8 +2,14 @@ import "dotenv/config";
 import { Worker } from "bullmq";
 import Redis from "ioredis";
 import { QUEUE_NAMES, getBullMQQueueName } from "../src/lib/queue/constants.js";
+import { getQueue } from "../src/lib/queue/producer.ts";
 import { processOutboxJob } from "../src/lib/queue/worker.ts";
 import { dispatchNextOutboxEvent } from "../src/lib/queue/dispatcher.ts";
+import { runSlaEvaluation } from "../src/lib/sla/evaluation.ts";
+import {
+  registerSlaEvaluationScheduler,
+  SLA_EVALUATION_JOB_NAME,
+} from "../src/lib/sla/scheduler.ts";
 
 const QUEUE_NAME = QUEUE_NAMES.primary;
 const BULLMQ_QUEUE_NAME = getBullMQQueueName(QUEUE_NAME);
@@ -45,10 +51,29 @@ const connection = new Redis(REDIS_URL, {
   maxRetriesPerRequest: null,
 });
 
+// Register the recurring SLA evaluation scheduler.
+// upsertJobScheduler is idempotent, so this is safe to call on every
+// worker startup. We fail fast if registration fails so the worker does
+// not appear healthy without an SLA scheduler.
+try {
+  await registerSlaEvaluationScheduler(getQueue());
+  console.log("[worker] SLA evaluation scheduler registered");
+} catch (error) {
+  console.error(
+    "[worker] Failed to register SLA evaluation scheduler:",
+    error instanceof Error ? error.message : error,
+  );
+  await connection.quit().catch(() => {});
+  process.exit(1);
+}
+
 const worker = new Worker(
   BULLMQ_QUEUE_NAME,
   (job) => {
     console.log(`[worker] Processing job ${job.id} (${job.name})`);
+    if (job.name === SLA_EVALUATION_JOB_NAME) {
+      return runSlaEvaluation();
+    }
     return processOutboxJob(job);
   },
   { connection }
