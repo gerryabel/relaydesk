@@ -112,6 +112,7 @@ enum TicketActivityType {
 enum NotificationType {
   TICKET_ASSIGNED
   TICKET_STATUS_CHANGED
+  SLA_AT_RISK
 }
 
 model TicketActivity {
@@ -313,6 +314,16 @@ model SentEmail {
 
   @@index([outboxEventId])
   @@index([claimedAt])
+}
+
+model SentSlaNotification {
+  id        String   @id @default(cuid())
+  ticketId  String
+  slaType   String
+  sentAt    DateTime @default(now())
+
+  @@unique([ticketId, slaType])
+  @@index([ticketId])
 }
 
 model Attachment {
