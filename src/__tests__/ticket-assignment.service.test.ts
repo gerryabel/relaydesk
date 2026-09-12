@@ -108,6 +108,9 @@ describe('ticket assignment services', () => {
             },
           } as never),
         },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
+        },
       } as never;
 
       return worker(txClient);

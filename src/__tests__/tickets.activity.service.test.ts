@@ -217,6 +217,7 @@ describe('ticket activity services', () => {
         ticket: { update: vi.fn().mockResolvedValue({ ...fakeTicket, assignedToId: 'user-456', assignedTo: fakeAssignee } as never) },
         ticketActivity: { create: vi.fn().mockResolvedValue(fakeActivity as never) },
         notification: { create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never) },
+        outboxEvent: { create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never) },
       } as unknown as Parameters<typeof worker>[0];
 
       return worker(txClient);
