@@ -3,7 +3,7 @@ import type { TicketStatus } from '@/generated/prisma';
 import { prisma } from '@/lib/db/prisma';
 import { getCurrentMembership } from '@/lib/workspace/server';
 
-export const notificationTypeSchema = z.enum(['TICKET_ASSIGNED', 'TICKET_STATUS_CHANGED']);
+export const notificationTypeSchema = z.enum(['TICKET_ASSIGNED', 'TICKET_STATUS_CHANGED', 'SLA_AT_RISK']);
 
 export type NotificationType = z.infer<typeof notificationTypeSchema>;
 
