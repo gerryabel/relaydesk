@@ -30,19 +30,13 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-function createTagRequest(init?: RequestInit) {
-  return new Request('http://localhost/api/tags', {
-    ...init,
-  });
-}
-
 describe('tags API', () => {
   it('GET returns tags when authorized', async () => {
     vi.mocked(mockedTagServer.getTags).mockResolvedValueOnce([
       { id: 'tag-1', name: 'Billing', normalizedName: 'billing' },
     ] as never);
 
-    const response = await GET(createTagRequest());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -52,7 +46,7 @@ describe('tags API', () => {
   it('GET returns 401 when membership resolution fails', async () => {
     vi.mocked(mockedTagServer.getTags).mockRejectedValueOnce(new UnauthorizedError('Unauthorized') as never);
 
-    const response = await GET(createTagRequest());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(401);
@@ -62,7 +56,7 @@ describe('tags API', () => {
   it('GET returns 403 when membership is missing', async () => {
     vi.mocked(mockedTagServer.getTags).mockRejectedValueOnce(new ForbiddenError('Forbidden') as never);
 
-    const response = await GET(createTagRequest());
+    const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(403);
