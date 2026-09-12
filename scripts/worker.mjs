@@ -2,10 +2,15 @@ import "dotenv/config";
 import { Worker } from "bullmq";
 import Redis from "ioredis";
 import { QUEUE_NAMES, getBullMQQueueName } from "../src/lib/queue/constants.js";
+import { processOutboxJob } from "../src/lib/queue/worker.ts";
+import { dispatchNextOutboxEvent } from "../src/lib/queue/dispatcher.ts";
 
 const QUEUE_NAME = QUEUE_NAMES.primary;
 const BULLMQ_QUEUE_NAME = getBullMQQueueName(QUEUE_NAME);
 const REDIS_URL = process.env.REDIS_URL;
+const DISPATCH_INTERVAL_MS = Number(
+  process.env.DISPATCH_INTERVAL_MS ?? 5000,
+);
 
 if (!REDIS_URL) {
   console.error("[worker] REDIS_URL is not set");
@@ -13,6 +18,9 @@ if (!REDIS_URL) {
 }
 
 let isShuttingDown = false;
+let startupError;
+let dispatchTimer = null;
+let activeDispatch = null;
 
 const startupConnection = new Redis(REDIS_URL, {
   maxRetriesPerRequest: 1,
@@ -39,15 +47,12 @@ const connection = new Redis(REDIS_URL, {
 
 const worker = new Worker(
   BULLMQ_QUEUE_NAME,
-  async (job) => {
+  (job) => {
     console.log(`[worker] Processing job ${job.id} (${job.name})`);
-    // Placeholder handler — Task 3 replaces this with the real dispatcher.
-    return { processed: true };
+    return processOutboxJob(job);
   },
   { connection }
 );
-
-let startupError;
 
 worker.on("ready", () => {
   console.log("[worker] Ready");
@@ -64,11 +69,51 @@ worker.on("failed", (job, error) => {
   console.error(`[worker] Job ${job?.id} failed:`, error.message);
 });
 
+async function dispatchTick() {
+  if (isShuttingDown || activeDispatch) return;
+
+  activeDispatch = (async () => {
+    try {
+      const result = await dispatchNextOutboxEvent();
+
+      if (result.dispatched) {
+        console.log(
+          `[dispatcher] Dispatched outbox event ${result.eventId}`,
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[dispatcher] Error:",
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      activeDispatch = null;
+    }
+  })();
+
+  await activeDispatch;
+}
+
+function startDispatcher() {
+  dispatchTimer = setInterval(dispatchTick, DISPATCH_INTERVAL_MS);
+}
+
 async function shutdown(signal, code = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
   console.log(`[worker] Received ${signal}, shutting down...`);
   try {
+    if (dispatchTimer) {
+      clearInterval(dispatchTimer);
+      dispatchTimer = null;
+    }
+    if (activeDispatch) {
+      try {
+        await activeDispatch;
+      } catch {
+        // ignore dispatch errors during shutdown
+      }
+    }
     await worker.close();
     await connection.quit();
     console.log("[worker] Shutdown complete");
@@ -97,4 +142,5 @@ process.on("unhandledRejection", (reason) => {
   void shutdown("unhandledRejection", 1);
 });
 
+startDispatcher();
 console.log("[worker] Starting...");

@@ -17,6 +17,8 @@ export interface OutboxEventRecord {
   payload: OutboxPayload;
   createdAt: Date;
   processedAt: Date | null;
+  completedAt: Date | null;
+  failedAt: Date | null;
   attempts: number;
   lastError: string | null;
 }

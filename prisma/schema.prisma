@@ -294,6 +294,8 @@ model OutboxEvent {
   payload       Json
   createdAt     DateTime  @default(now())
   processedAt   DateTime?
+  completedAt   DateTime?
+  failedAt      DateTime?
   attempts      Int       @default(0)
   lastError     String?
 

@@ -13,7 +13,7 @@
     "db:studio": "prisma studio",
     "self-check": "npm run lint && npm run typecheck && npm run build",
     "infra:check": "node --env-file=.env scripts/infra-check.mjs",
-    "worker": "node --env-file=.env scripts/worker.mjs",
+    "worker": "tsx scripts/worker.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -38,6 +38,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5",
     "vitest": "^4.1.10"
   }

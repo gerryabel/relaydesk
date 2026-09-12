@@ -43,6 +43,8 @@ export async function claimNextOutboxEvent(
 
   const event = await tx.outboxEvent.findFirst({
     where: {
+      failedAt: null,
+      completedAt: null,
       OR: [
         { processedAt: null },
         { processedAt: { lt: new Date() } },
@@ -57,12 +59,14 @@ export async function claimNextOutboxEvent(
       payload: true,
       createdAt: true,
       processedAt: true,
+      completedAt: true,
+      failedAt: true,
       attempts: true,
       lastError: true,
     },
   });
 
-  if (!event) {
+  if (!event || event.failedAt !== null) {
     return { event: null, claimed: false };
   }
 
@@ -71,6 +75,8 @@ export async function claimNextOutboxEvent(
   const { count } = await tx.outboxEvent.updateMany({
     where: {
       id: event.id,
+      failedAt: null,
+      completedAt: null,
       ...(wasPending ? { processedAt: null } : { processedAt: { lt: new Date() } }),
     },
     data: {
@@ -98,9 +104,10 @@ export async function markOutboxEventProcessed(
   tx: Prisma.TransactionClient,
   outboxEventId: string,
 ): Promise<void> {
+  const completedAt = new Date();
   await tx.outboxEvent.updateMany({
-    where: { id: outboxEventId },
-    data: { processedAt: new Date(), lastError: null },
+    where: { id: outboxEventId, failedAt: null },
+    data: { processedAt: completedAt, completedAt, lastError: null },
   });
 }
 
@@ -111,9 +118,9 @@ export async function markOutboxEventPermanentlyFailed(
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await tx.outboxEvent.updateMany({
-    where: { id: outboxEventId, attempts: { lt: 3 } },
+    where: { id: outboxEventId, failedAt: null },
     data: {
-      processedAt: new Date(Date.now() - 1000),
+      failedAt: new Date(),
       lastError: `[task-5:permanent-failure] ${message}`,
     },
   });
@@ -128,11 +135,11 @@ export async function recordOutboxFailure(
   const isPermanent = error instanceof PermanentError;
 
   await tx.outboxEvent.updateMany({
-    where: { id: outboxEventId },
+    where: { id: outboxEventId, failedAt: null },
     data: {
-      processedAt: isPermanent ? new Date(Date.now() - 1000) : null,
-      attempts: { increment: 1 },
+      processedAt: null,
       lastError: isPermanent ? `[task-5:permanent-failure] ${message}` : message,
+      ...(isPermanent ? { failedAt: new Date() } : {}),
     },
   });
 }
