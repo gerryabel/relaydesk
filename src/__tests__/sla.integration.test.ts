@@ -3,6 +3,8 @@ import { PrismaClient } from "@/generated/prisma";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { getTestDatabaseUrl } from "@/lib/test/db";
 import { runSlaEvaluation } from "@/lib/sla/evaluation";
+import { handleSlaAtRiskEvent } from "@/lib/queue/handlers/sla";
+import type { OutboxEventRecord } from "@/lib/outbox/types";
 // No direct imports from duplicate-suppression needed; the evaluator
 // exercises the full suppression flow internally.
 
@@ -306,5 +308,193 @@ describe("SLA evaluation integration", () => {
       },
     });
     expect(suppression).toBeNull();
+  });
+
+  describe("handler idempotency", () => {
+    it("retry of the same OutboxEvent does not create a duplicate notification", async () => {
+      const now = new Date();
+      const durationMs = 10 * 60 * 60 * 1000;
+      const createdAt = new Date(now.getTime() - 9 * 60 * 60 * 1000);
+      const responseDeadline = new Date(createdAt.getTime() + durationMs);
+
+      const ticket = await prisma.ticket.create({
+        data: {
+          workspaceId,
+          title: "SLA-E2E-idempotency-retry",
+          createdById: assigneeId,
+          assignedToId: assigneeId,
+          status: "open",
+          priority: "medium",
+          createdAt,
+          responseSlaDeadline: responseDeadline,
+        },
+      });
+
+      // Create an outbox event manually to simulate the evaluator output
+      const outboxEvent = await prisma.outboxEvent.create({
+        data: {
+          eventType: "SLA_AT_RISK",
+          aggregateType: "Ticket",
+          aggregateId: ticket.id,
+          payload: {
+            ticketId: ticket.id,
+            slaType: "response",
+            workspaceId,
+            assignedToId: assigneeId,
+          },
+        },
+      });
+
+      const eventRecord: OutboxEventRecord = {
+        ...outboxEvent,
+        payload: outboxEvent.payload as Record<string, unknown>,
+      } as OutboxEventRecord;
+
+      // First processing: creates notification
+      const result1 = await handleSlaAtRiskEvent(eventRecord);
+      expect(result1).toEqual({ status: "success" });
+
+      const notificationsAfterFirst = await prisma.notification.findMany({
+        where: { ticketId: ticket.id, type: "SLA_AT_RISK" },
+      });
+      expect(notificationsAfterFirst).toHaveLength(1);
+
+      // Simulate retry (e.g., crash between notification creation and markOutboxEventProcessed)
+      const result2 = await handleSlaAtRiskEvent(eventRecord);
+      expect(result2).toEqual({ status: "success" });
+
+      // Should still be exactly one notification
+      const notificationsAfterRetry = await prisma.notification.findMany({
+        where: { ticketId: ticket.id, type: "SLA_AT_RISK" },
+      });
+      expect(notificationsAfterRetry).toHaveLength(1);
+      expect(notificationsAfterRetry[0].outboxEventId).toBe(outboxEvent.id);
+    });
+
+    it("concurrent processing of the same OutboxEvent creates exactly one notification", async () => {
+      const now = new Date();
+      const durationMs = 10 * 60 * 60 * 1000;
+      const createdAt = new Date(now.getTime() - 9 * 60 * 60 * 1000);
+      const responseDeadline = new Date(createdAt.getTime() + durationMs);
+
+      const ticket = await prisma.ticket.create({
+        data: {
+          workspaceId,
+          title: "SLA-E2E-idempotency-concurrent",
+          createdById: assigneeId,
+          assignedToId: assigneeId,
+          status: "open",
+          priority: "medium",
+          createdAt,
+          responseSlaDeadline: responseDeadline,
+        },
+      });
+
+      const outboxEvent = await prisma.outboxEvent.create({
+        data: {
+          eventType: "SLA_AT_RISK",
+          aggregateType: "Ticket",
+          aggregateId: ticket.id,
+          payload: {
+            ticketId: ticket.id,
+            slaType: "response",
+            workspaceId,
+            assignedToId: assigneeId,
+          },
+        },
+      });
+
+      const eventRecord: OutboxEventRecord = {
+        ...outboxEvent,
+        payload: outboxEvent.payload as Record<string, unknown>,
+      } as OutboxEventRecord;
+
+      // Simulate two workers processing the same event concurrently
+      const results = await Promise.allSettled([
+        handleSlaAtRiskEvent(eventRecord),
+        handleSlaAtRiskEvent(eventRecord),
+      ]);
+
+      // At least one should succeed, the other should either succeed (P2002 handled) or fail with P2002
+      const succeeded = results.filter((r) => r.status === "fulfilled");
+      expect(succeeded.length).toBeGreaterThanOrEqual(1);
+
+      // Exactly one notification should exist
+      const notifications = await prisma.notification.findMany({
+        where: { ticketId: ticket.id, type: "SLA_AT_RISK" },
+      });
+      expect(notifications).toHaveLength(1);
+    });
+
+    it("different OutboxEvent IDs for the same ticket create separate notifications", async () => {
+      const now = new Date();
+      const durationMs = 10 * 60 * 60 * 1000;
+      const createdAt = new Date(now.getTime() - 9 * 60 * 60 * 1000);
+      const responseDeadline = new Date(createdAt.getTime() + durationMs);
+
+      const ticket = await prisma.ticket.create({
+        data: {
+          workspaceId,
+          title: "SLA-E2E-idempotency-separate",
+          createdById: assigneeId,
+          assignedToId: assigneeId,
+          status: "open",
+          priority: "medium",
+          createdAt,
+          responseSlaDeadline: responseDeadline,
+        },
+      });
+
+      // Create two separate outbox events (simulating two evaluations after suppression window)
+      const eventA = await prisma.outboxEvent.create({
+        data: {
+          eventType: "SLA_AT_RISK",
+          aggregateType: "Ticket",
+          aggregateId: ticket.id,
+          payload: {
+            ticketId: ticket.id,
+            slaType: "response",
+            workspaceId,
+            assignedToId: assigneeId,
+          },
+        },
+      });
+
+      const eventB = await prisma.outboxEvent.create({
+        data: {
+          eventType: "SLA_AT_RISK",
+          aggregateType: "Ticket",
+          aggregateId: ticket.id,
+          payload: {
+            ticketId: ticket.id,
+            slaType: "response",
+            workspaceId,
+            assignedToId: assigneeId,
+          },
+        },
+      });
+
+      const recordA: OutboxEventRecord = {
+        ...eventA,
+        payload: eventA.payload as Record<string, unknown>,
+      } as OutboxEventRecord;
+
+      const recordB: OutboxEventRecord = {
+        ...eventB,
+        payload: eventB.payload as Record<string, unknown>,
+      } as OutboxEventRecord;
+
+      await handleSlaAtRiskEvent(recordA);
+      await handleSlaAtRiskEvent(recordB);
+
+      // Two separate notifications should exist (different outboxEventId)
+      const notifications = await prisma.notification.findMany({
+        where: { ticketId: ticket.id, type: "SLA_AT_RISK" },
+      });
+      expect(notifications).toHaveLength(2);
+
+      const outboxEventIds = notifications.map((n) => n.outboxEventId).sort();
+      expect(outboxEventIds).toEqual([eventA.id, eventB.id].sort());
+    });
   });
 });

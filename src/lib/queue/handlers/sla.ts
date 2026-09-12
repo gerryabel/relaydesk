@@ -40,6 +40,14 @@ function extractPayload(event: OutboxEventRecord): SlaAtRiskPayload {
  * context or getCurrentMembership(). It verifies workspace membership
  * directly against the database, following the same pattern as
  * createTicketAssignedNotification in src/lib/notifications/server.ts.
+ *
+ * Idempotency: The handler uses `outboxEventId` as a unique key on the
+ * Notification. If the notification insert fails with a unique constraint
+ * violation (P2002), it means this OutboxEvent already created its
+ * notification (e.g., a crash between notification creation and
+ * markOutboxEventProcessed, followed by a BullMQ retry). In that case the
+ * handler returns success as a safe no-op. The unique constraint also
+ * guarantees exactly-one notification under concurrent duplicate processing.
  */
 export async function handleSlaAtRiskEvent(
   event: OutboxEventRecord,
@@ -77,16 +85,37 @@ export async function handleSlaAtRiskEvent(
     );
   }
 
-  await prisma.notification.create({
-    data: {
-      userId: payload.assignedToId,
-      workspaceId: payload.workspaceId,
-      ticketId: payload.ticketId,
-      type: "SLA_AT_RISK",
-      title: "SLA at risk",
-      body: `Ticket #${payload.ticketId} is approaching its ${slaTypeLabel} SLA deadline.`,
-    },
-  });
+  // Create the notification with outboxEventId as the idempotency key.
+  // If this OutboxEvent has already created its notification (e.g., due to
+  // a retry after a crash), the unique constraint will raise P2002 and we
+  // return success as a safe no-op.
+  try {
+    await prisma.notification.create({
+      data: {
+        userId: payload.assignedToId,
+        workspaceId: payload.workspaceId,
+        ticketId: payload.ticketId,
+        type: "SLA_AT_RISK",
+        title: "SLA at risk",
+        body: `Ticket #${payload.ticketId} is approaching its ${slaTypeLabel} SLA deadline.`,
+        outboxEventId: event.id,
+      },
+    });
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      // Notification already exists for this OutboxEvent — safe no-op.
+      return { status: "success" };
+    }
+    throw error;
+  }
 
   return { status: "success" };
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === "P2002"
+  );
 }

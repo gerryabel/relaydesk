@@ -11,6 +11,7 @@ type NotificationRow = {
   type: string;
   title: string;
   body: string;
+  outboxEventId?: string;
 };
 
 const mockNotifications: NotificationRow[] = [];
@@ -18,24 +19,21 @@ const mockNotifications: NotificationRow[] = [];
 vi.mock("@/lib/db/prisma", () => {
   const mockPrisma = {
     membership: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      findFirst: vi.fn(async () => null) as any,
+      findFirst: vi.fn(async () => null),
     },
     ticket: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      findFirst: vi.fn(async () => null) as any,
+      findFirst: vi.fn(async () => null),
     },
     notification: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       create: vi.fn(async ({ data }: { data: Omit<NotificationRow, "id"> }) => {
         const created: NotificationRow = { id: `notif-${mockNotifications.length + 1}`, ...data };
         mockNotifications.push(created);
         return created;
-      }) as any,
+      }),
     },
   };
 
-  return { prisma: mockPrisma };
+  return { prisma: mockPrisma as unknown as typeof import("@/generated/prisma").PrismaClient };
 });
 
 function makeEvent(overrides: Partial<OutboxEventRecord> & { payload?: Record<string, unknown> } = {}): OutboxEventRecord {
@@ -188,5 +186,103 @@ describe("SLA_AT_RISK handler", () => {
     const event = makeEvent({ payload: { invalid: "data" } });
 
     await expect(handleSlaAtRiskEvent(event)).rejects.toThrow(PermanentError);
+  });
+
+  describe("idempotency", () => {
+    it("creates exactly one notification on first processing", async () => {
+      findMembership.mockResolvedValue({ id: "membership-1" });
+      findTicket.mockResolvedValue({ id: "ticket-1" });
+
+      const event = makeEvent();
+      await handleSlaAtRiskEvent(event);
+
+      expect(mockNotifications).toHaveLength(1);
+      expect(mockNotifications[0].outboxEventId).toBe("outbox-1");
+    });
+
+    it("does not create a duplicate notification when the same OutboxEvent is processed twice", async () => {
+      findMembership.mockResolvedValue({ id: "membership-1" });
+      findTicket.mockResolvedValue({ id: "ticket-1" });
+
+      // Track which outboxEventIds have been seen to simulate P2002
+      const seenOutboxEvents = new Set<string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mockImpl = async ({ data }: { data: any }) => {
+        if (data.outboxEventId && seenOutboxEvents.has(data.outboxEventId)) {
+          const error = new Error("Unique constraint failed") as Error & { code: string };
+          error.code = "P2002";
+          throw error;
+        }
+        if (data.outboxEventId) {
+          seenOutboxEvents.add(data.outboxEventId);
+        }
+        const created: NotificationRow = {
+          id: `notif-${mockNotifications.length + 1}`,
+          userId: data.userId,
+          workspaceId: data.workspaceId,
+          ticketId: data.ticketId,
+          type: data.type,
+          title: data.title,
+          body: data.body,
+          outboxEventId: data.outboxEventId,
+        };
+        mockNotifications.push(created);
+        return created;
+      };
+      createNotification.mockImplementation(mockImpl);
+
+      const event = makeEvent();
+
+      // First processing: creates notification
+      const result1 = await handleSlaAtRiskEvent(event);
+      expect(result1).toEqual({ status: "success" });
+      expect(mockNotifications).toHaveLength(1);
+
+      // Second processing (simulated retry): should NOT create another notification
+      const result2 = await handleSlaAtRiskEvent(event);
+      expect(result2).toEqual({ status: "success" });
+      expect(mockNotifications).toHaveLength(1);
+    });
+
+    it("allows different OutboxEvent IDs to create separate notifications", async () => {
+      findMembership.mockResolvedValue({ id: "membership-1" });
+      findTicket.mockResolvedValue({ id: "ticket-1" });
+
+      const eventA = makeEvent({ id: "outbox-A" });
+      const eventB = makeEvent({ id: "outbox-B" });
+
+      await handleSlaAtRiskEvent(eventA);
+      await handleSlaAtRiskEvent(eventB);
+
+      expect(mockNotifications).toHaveLength(2);
+      expect(mockNotifications[0].outboxEventId).toBe("outbox-A");
+      expect(mockNotifications[1].outboxEventId).toBe("outbox-B");
+    });
+
+    it("rethrows non-unique-constraint errors (temporary DB failure remains retryable)", async () => {
+      findMembership.mockResolvedValue({ id: "membership-1" });
+      findTicket.mockResolvedValue({ id: "ticket-1" });
+
+      createNotification.mockRejectedValueOnce(new Error("Connection reset"));
+
+      const event = makeEvent();
+
+      await expect(handleSlaAtRiskEvent(event)).rejects.toThrow("Connection reset");
+      expect(mockNotifications).toHaveLength(0);
+    });
+
+    it("includes outboxEventId in the notification data", async () => {
+      findMembership.mockResolvedValue({ id: "membership-1" });
+      findTicket.mockResolvedValue({ id: "ticket-1" });
+
+      const event = makeEvent({ id: "outbox-specific-id" });
+      await handleSlaAtRiskEvent(event);
+
+      expect(createNotification).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          outboxEventId: "outbox-specific-id",
+        }),
+      });
+    });
   });
 });
