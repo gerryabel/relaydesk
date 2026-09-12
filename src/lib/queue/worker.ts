@@ -47,6 +47,22 @@ function resolveAttempt(job: OutboxJob, parsedAttempt: number): number {
 }
 
 export async function processOutboxJob(job: OutboxJob): Promise<{ handled: boolean }> {
+  // Safety net: outbox jobs must carry outboxEventId. Scheduler jobs (e.g.
+  // SLA_EVALUATION) have `data: {}` and must be routed away by the worker
+  // processor before reaching this function. If we get here without an
+  // outboxEventId, fail fast with a clear error rather than a confusing Zod
+  // schema-validation failure.
+  if (
+    !job.data ||
+    typeof job.data !== "object" ||
+    !("outboxEventId" in job.data)
+  ) {
+    throw new Error(
+      `processOutboxJob received a non-outbox job (name=${job.name ?? "unknown"}). ` +
+        `This indicates a routing bug in the worker processor.`,
+    );
+  }
+
   const parsed = OutboxJobSchema.parse(job.data);
   const eventType = parsed.eventType;
   const attempt = resolveAttempt(job, parsed.attempt);

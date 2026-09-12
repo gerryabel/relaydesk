@@ -146,9 +146,23 @@ try {
 // not appear healthy without an SLA scheduler.
 try {
   await registerSlaEvaluationScheduler(getQueue());
-  info("SLA evaluation scheduler registered");
+  info("SLA evaluation scheduler registered", {
+    schedulerJobName: SLA_EVALUATION_JOB_NAME,
+  });
 } catch (error) {
   logError("Failed to register SLA evaluation scheduler", { error });
+  await connection.quit().catch(() => {});
+  process.exit(1);
+}
+
+// Fail fast if the scheduler job name is not what we expect. This guards
+// against a silently broken SLA routing: if SLA_EVALUATION_JOB_NAME were
+// undefined or wrong, every scheduler job would fall through to
+// processOutboxJob and fail OutboxJobSchema validation.
+if (!SLA_EVALUATION_JOB_NAME || typeof SLA_EVALUATION_JOB_NAME !== "string") {
+  logError("SLA_EVALUATION_JOB_NAME is not a valid string", {
+    value: SLA_EVALUATION_JOB_NAME,
+  });
   await connection.quit().catch(() => {});
   process.exit(1);
 }
@@ -156,13 +170,21 @@ try {
 const worker = new Worker(
   BULLMQ_QUEUE_NAME,
   (job) => {
+    // Task 6 routing: scheduler-created SLA_EVALUATION jobs must run through
+    // runSlaEvaluation, NEVER through processOutboxJob. Their data is `{}` by
+    // design and would fail OutboxJobSchema. Compare by BullMQ job name.
     if (job.name === SLA_EVALUATION_JOB_NAME) {
-      info("Processing SLA evaluation job", { jobId: job.id });
+      info("Processing SLA evaluation job", {
+        jobId: job.id,
+        name: job.name,
+        attempt: job.attemptsMade,
+      });
       return runSlaEvaluation();
     }
 
     info("Processing outbox job", {
       jobId: job.id,
+      name: job.name,
       eventType: job.data?.eventType,
       attempt: job.attemptsMade,
       outboxEventId: job.data?.outboxEventId,
@@ -210,11 +232,9 @@ async function dispatchTick() {
 
   activeDispatch = (async () => {
     try {
-      const result = await dispatchNextOutboxEvent();
-
-      if (!result.dispatched) {
-        info("No outbox event available for dispatch");
-      }
+      // dispatchNextOutboxEvent logs its own structured events
+      // (dispatched / no-event / enqueue-failure). Do not duplicate them.
+      await dispatchNextOutboxEvent();
     } catch (error) {
       logError("Dispatcher error", { error });
     } finally {
