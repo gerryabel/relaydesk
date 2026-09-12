@@ -267,16 +267,17 @@ model TicketTag {
 }
 
 model Notification {
-  id         String          @id @default(cuid())
-  userId     String
-  workspaceId String
-  ticketId   String?
-  type       NotificationType
-  title      String
-  body       String
-  readAt     DateTime?
-  createdAt  DateTime        @default(now())
-  updatedAt  DateTime        @updatedAt
+  id            String          @id @default(cuid())
+  userId        String
+  workspaceId   String
+  ticketId      String?
+  type          NotificationType
+  title         String
+  body          String
+  readAt        DateTime?
+  outboxEventId String?         @unique
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
