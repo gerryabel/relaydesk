@@ -11,6 +11,7 @@ const baseEvent = {
   payload: { workspaceId: 'workspace-1' },
   createdAt: new Date('2026-09-08T00:00:00Z'),
   processedAt: null,
+  failedAt: null,
   attempts: 0,
   lastError: null,
 };
@@ -33,10 +34,11 @@ describe('outbox dispatcher', () => {
     expect(claimed.event?.id).toBe('outbox-1');
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1', processedAt: null },
+        where: { id: 'outbox-1', processedAt: null, completedAt: null, failedAt: null },
         data: expect.objectContaining({
           processedAt: expect.any(Date),
           attempts: { increment: 1 },
+          lastError: null,
         }),
       }),
     );
@@ -79,7 +81,7 @@ describe('outbox dispatcher', () => {
     expect(claimed.claimed).toBe(false);
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1', processedAt: null },
+        where: { id: 'outbox-1', processedAt: null, completedAt: null, failedAt: null },
       }),
     );
   });
@@ -98,7 +100,7 @@ describe('outbox dispatcher', () => {
     expect(claimed.event).not.toBeNull();
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'outbox-1', processedAt: { lt: expect.any(Date) } },
+        where: { id: 'outbox-1', processedAt: { lt: expect.any(Date) }, completedAt: null, failedAt: null },
         data: expect.objectContaining({ attempts: { increment: 1 } }),
       }),
     );
@@ -123,12 +125,27 @@ describe('outbox completion helpers', () => {
     await markOutboxEventProcessed(tx, 'outbox-1');
 
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith({
-      where: { id: 'outbox-1' },
-      data: { processedAt: expect.any(Date), lastError: null },
+      where: { id: 'outbox-1', failedAt: null },
+      data: { processedAt: expect.any(Date), completedAt: expect.any(Date), lastError: null },
     });
   });
 
-  it('marks an outbox event failed without resetting attempts', async () => {
+  it('excludes completed events from claim', async () => {
+    const tx = {
+      outboxEvent: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        updateMany: vi.fn(),
+      },
+    } as unknown as Prisma.TransactionClient;
+
+    const claimed = await claimNextOutboxEvent(tx);
+
+    expect(claimed.claimed).toBe(false);
+    expect(claimed.event).toBeNull();
+    expect(tx.outboxEvent.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('marks an outbox event failed without changing attempts', async () => {
     const tx = {
       outboxEvent: {
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -138,10 +155,9 @@ describe('outbox completion helpers', () => {
     await markOutboxEventFailed(tx, 'outbox-1', new Error('handler boom'));
 
     expect(tx.outboxEvent.updateMany).toHaveBeenCalledWith({
-      where: { id: 'outbox-1' },
+      where: { id: 'outbox-1', failedAt: null },
       data: {
         processedAt: null,
-        attempts: { increment: 1 },
         lastError: 'handler boom',
       },
     });

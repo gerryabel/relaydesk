@@ -11,7 +11,6 @@ export const SENT_STATUS = 'SENT' as const;
 export const STALE_SEND_CLAIM_MS = 5 * 60 * 1000;
 
 export async function getSentEmail(outboxEventId: string) {
-  // @ts-expect-error Prisma client is stale until prisma generate after migration
   return prisma.sentEmail.findFirst({
     where: { outboxEventId, status: SENT_STATUS },
     select: { outboxEventId: true, recipient: true, sentAt: true },
@@ -20,13 +19,11 @@ export async function getSentEmail(outboxEventId: string) {
 
 async function claimEmailSend(outboxEventId: string, recipient: string) {
   const staleBefore = new Date(Date.now() - STALE_SEND_CLAIM_MS);
-  // @ts-expect-error Prisma client is stale until prisma generate after migration
   await prisma.sentEmail.deleteMany({
     where: { outboxEventId, status: SENDING_STATUS, claimedAt: { lt: staleBefore } },
   });
 
   try {
-    // @ts-expect-error Prisma client is stale until prisma generate after migration
     await prisma.sentEmail.create({
       data: { outboxEventId, recipient, status: SENDING_STATUS, claimedAt: new Date() },
     });
@@ -44,7 +41,6 @@ async function claimEmailSend(outboxEventId: string, recipient: string) {
 }
 
 async function markEmailSent(outboxEventId: string) {
-  // @ts-expect-error Prisma client is stale until prisma generate after migration
   await prisma.sentEmail.updateMany({
     where: { outboxEventId, status: SENDING_STATUS },
     data: { status: SENT_STATUS, sentAt: new Date() },
@@ -52,7 +48,6 @@ async function markEmailSent(outboxEventId: string) {
 }
 
 async function releaseEmailClaim(outboxEventId: string) {
-  // @ts-expect-error Prisma client is stale until prisma generate after migration
   await prisma.sentEmail.deleteMany({
     where: { outboxEventId, status: SENDING_STATUS },
   });
@@ -167,10 +162,9 @@ export async function sendEmailForOutboxEvent(event: OutboxEventRecord): Promise
     await releaseEmailClaim(event.id);
     throw classifyDeliveryResult(providerResult);
   } catch (error) {
-    await releaseEmailClaim(event.id);
-
     const classification = classifyProviderError(error);
     if (!classification.retryable) {
+      await releaseEmailClaim(event.id);
       return {
         status: 'failure',
         error: {
@@ -180,6 +174,7 @@ export async function sendEmailForOutboxEvent(event: OutboxEventRecord): Promise
       };
     }
 
+    await releaseEmailClaim(event.id);
     throw new RetryableError(classification.message);
   }
 }

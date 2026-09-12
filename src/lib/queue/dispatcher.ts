@@ -1,5 +1,8 @@
+import { prisma } from '@/lib/db/prisma';
+import { claimNextOutboxEvent } from '@/lib/outbox/outbox';
 import { OutboxJobSchema } from './job-types';
 import { EMAIL_RETRY_POLICY } from './retry-policy';
+import { getQueue } from './producer';
 
 export async function enqueueOutboxJob(
   event: { id: string; eventType: string; aggregateType: string; aggregateId: string; payload: Record<string, unknown> },
@@ -25,7 +28,20 @@ export async function enqueueOutboxJob(
   });
 }
 
-export async function dispatchNextOutboxEvent() {
-  // Task 3 stub: dispatcher loop will be implemented here.
-  return { dispatched: false };
+export interface DispatchResult {
+  dispatched: boolean;
+  eventId?: string;
+}
+
+export async function dispatchNextOutboxEvent(): Promise<DispatchResult> {
+  const claimed = await claimNextOutboxEvent(prisma);
+
+  if (!claimed.claimed || !claimed.event) {
+    return { dispatched: false };
+  }
+
+  const queue = getQueue() as Parameters<typeof enqueueOutboxJob>[1];
+  await enqueueOutboxJob(claimed.event, queue);
+
+  return { dispatched: true, eventId: claimed.event.id };
 }

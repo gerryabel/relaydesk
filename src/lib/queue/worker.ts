@@ -1,7 +1,12 @@
 import { OutboxJobSchema } from './job-types';
 import { getHandler } from './handlers/registry';
-import { claimNextOutboxEvent, markOutboxEventProcessed, recordOutboxFailure } from '@/lib/outbox/outbox';
+import {
+  markOutboxEventProcessed,
+  markOutboxEventPermanentlyFailed,
+  recordOutboxFailure,
+} from '@/lib/outbox/outbox';
 import { prisma } from '@/lib/db/prisma';
+import type { OutboxEventRecord } from '@/lib/outbox/types';
 import type { OutboxHandlerResult } from './handlers/types';
 import { PermanentError, RetryableError } from '@/lib/queue/errors';
 
@@ -13,13 +18,26 @@ export async function processOutboxJob(job: { id: string; data: unknown }): Prom
   const parsed = OutboxJobSchema.parse(job.data);
   const handler = getHandler(parsed.eventType);
 
-  const result = await claimNextOutboxEvent(prisma, parsed.attempt);
-  if (!result.claimed || !result.event) {
+  const event = await prisma.outboxEvent.findUnique({
+    where: { id: parsed.outboxEventId },
+  });
+
+  if (!event) {
     return { handled: false };
   }
 
+  if (event.failedAt !== null) {
+    return { handled: false };
+  }
+
+  if (event.processedAt !== null && event.processedAt <= new Date()) {
+    return { handled: false };
+  }
+
+  const eventRecord = event as unknown as OutboxEventRecord;
+
   try {
-    const handlerResult: OutboxHandlerResult | void = await handler(result.event);
+    const handlerResult: OutboxHandlerResult | void = await handler(eventRecord);
 
     if (isFailureResult(handlerResult)) {
       if (handlerResult.error.retryable) {
@@ -28,11 +46,16 @@ export async function processOutboxJob(job: { id: string; data: unknown }): Prom
       throw new PermanentError(handlerResult.error.message);
     }
 
-    await markOutboxEventProcessed(prisma, result.event.id);
+    await markOutboxEventProcessed(prisma, event.id);
     return { handled: true };
   } catch (error) {
-    await recordOutboxFailure(prisma, result.event.id, error);
+    if (error instanceof PermanentError) {
+      await markOutboxEventPermanentlyFailed(prisma, event.id, error);
+    } else {
+      await recordOutboxFailure(prisma, event.id, error);
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Outbox job failed for ${result.event.eventType} ${result.event.id}: ${errorMessage}`);
+    throw new Error(`Outbox job failed for ${eventRecord.eventType} ${event.id}: ${errorMessage}`);
   }
 }
