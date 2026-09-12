@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, UnauthorizedError } from '@/lib/workspace/server';
 import { getTags, createTag, DuplicateTagError } from '@/lib/tags/server';
 
-export async function GET(_request: Request) {
+export async function GET() {
   try {
     const tags = await getTags();
 
