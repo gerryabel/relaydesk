@@ -50,27 +50,65 @@ export async function getCurrentWorkspace(): Promise<MembershipInfo['workspace']
   return membership.workspace;
 }
 
-export async function getWorkspaceMembers(): Promise<Array<{ id: string; name: string; email: string }>> {
+/**
+ * Verifies the current user is a workspace owner.
+ *
+ * Built on the existing WorkspaceRole model and getCurrentMembership().
+ * Reusable by privileged Team Management and Workspace Settings operations.
+ * Server-side only — never rely on this check being performed on the client.
+ */
+export async function assertWorkspaceOwner(): Promise<MembershipInfo> {
   const membership = await getCurrentMembership();
-  const members = await prisma.user.findMany({
+
+  if (membership.role !== 'owner') {
+    throw new ForbiddenError('Only workspace owners can perform this action.');
+  }
+
+  return membership;
+}
+
+export type WorkspaceMember = {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  role: 'owner' | 'member';
+  joinedAt: string;
+  isAssignable: boolean;
+};
+
+export async function getWorkspaceMembers(): Promise<WorkspaceMember[]> {
+  const membership = await getCurrentMembership();
+  const members = await prisma.membership.findMany({
     where: {
-      memberships: {
-        some: {
-          workspaceId: membership.workspaceId,
+      workspaceId: membership.workspaceId,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
         },
       },
     },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-    },
     orderBy: {
-      name: 'asc',
+      user: {
+        name: 'asc',
+      },
     },
   });
 
-  return members;
+  return members.map((membership) => ({
+    id: membership.user.id,
+    name: membership.user.name,
+    email: membership.user.email,
+    image: membership.user.image,
+    role: membership.role,
+    joinedAt: membership.createdAt.toISOString(),
+    isAssignable: true,
+  }));
 }
 
 export async function ensureDefaultWorkspace(userId: string): Promise<MembershipWithWorkspace> {
