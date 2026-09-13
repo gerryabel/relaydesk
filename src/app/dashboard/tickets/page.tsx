@@ -141,7 +141,8 @@ export default async function FilteredTicketsPage({ searchParams }: FilteredTick
   const page = parsePage(resolved);
   const limit = parseLimit(resolved);
   const resolvedSearchParams = buildResolvedSearchParams(resolved);
-  const [members, tags] = await Promise.all([getWorkspaceMembers(), getTags()]);
+  const [allMembers, tags] = await Promise.all([getWorkspaceMembers(), getTags()]);
+  const members = allMembers.map(({ id, name, email }) => ({ id, name, email }));
 
   const result = await getTickets({
     status: filters.status,

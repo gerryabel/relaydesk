@@ -212,7 +212,7 @@ export default async function TicketDetailPage({ params }: TicketDetailPageProps
   let availableTags: Array<{ id: string; name: string }> = [];
   try {
     const [workspaceMembers, tags] = await Promise.all([getWorkspaceMembers(), getTags()]);
-    members = workspaceMembers;
+    members = workspaceMembers.map(({ id, name, email }) => ({ id, name, email }));
     ticketTags = await getTicketTags(resolved.id);
     availableTags = tags;
   } catch (error) {
