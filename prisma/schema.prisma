@@ -19,6 +19,7 @@ model User {
   accounts        Account[]
   sessions        Session[]
   memberships     Membership[]
+  savedViews      SavedView[]
   createdTickets  Ticket[]     @relation("TicketCreator")
   assignedTickets Ticket[]     @relation("TicketAssignee")
   createdMessages Message[]    @relation("MessageCreator")
@@ -141,6 +142,34 @@ model Workspace {
   customers Customer[]
   tags     Tag[]
   notifications Notification[]
+  savedViews SavedView[]
+}
+
+enum SavedViewType {
+  tickets
+  my_queue
+}
+
+model SavedView {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  type        SavedViewType @default(tickets)
+  name        String
+
+  filterState Json          @default("{}")
+  sortState   Json          @default("{}")
+  viewState   Json          @default("{}")
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId, name])
+  @@index([workspaceId])
+  @@index([userId])
 }
 
 model Membership {

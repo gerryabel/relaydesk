@@ -9,6 +9,7 @@ const navigation = [
   { href: '/dashboard/tickets', label: 'Tickets' },
   { href: '/dashboard/tags', label: 'Tags' },
   { href: '/dashboard/members', label: 'Members' },
+  { href: '/dashboard/saved-views', label: 'Saved Views' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];
 
