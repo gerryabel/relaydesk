@@ -11,6 +11,7 @@ const navigation = [
   { href: '/dashboard/members', label: 'Members' },
   { href: '/dashboard/saved-views', label: 'Saved Views' },
   { href: '/dashboard/workload', label: 'Workload' },
+  { href: '/dashboard/analytics', label: 'Analytics' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];
 
