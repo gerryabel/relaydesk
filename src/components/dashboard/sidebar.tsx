@@ -10,6 +10,7 @@ const navigation = [
   { href: '/dashboard/tags', label: 'Tags' },
   { href: '/dashboard/members', label: 'Members' },
   { href: '/dashboard/saved-views', label: 'Saved Views' },
+  { href: '/dashboard/workload', label: 'Workload' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];
 
