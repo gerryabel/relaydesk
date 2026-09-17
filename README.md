@@ -13,6 +13,7 @@ This repository currently implements:
 * **Phase 4 — Ticket Workflow & Management**: ticket assignment, explicit workflow with validated transitions, priority and SLA foundation, search across title/description/creator/assignee, assignee filtering, sorting, offset pagination, and activity timeline. Milestone: `v0.3.0-alpha`.
 * **Phase 5 — Operational Helpdesk & Agent Productivity**: customer/contact management, customer ticket history and context, internal notes, tags/labels, SLA monitoring, my queue/agent queue, in-app notifications, bulk ticket actions, and message attachments. Milestone: `v0.4.0-alpha`.
 * **Phase 6 — Background Processing & Operational Hardening**: Redis/BullMQ infrastructure, transactional outbox, worker dispatch, email delivery, retry and idempotency handling, SLA background evaluation, structured worker/dispatcher logging, correlation IDs, queue and Redis diagnostics, stale outbox recovery reporting, and graceful worker shutdown. **Phase 6 is complete and independently verified on `main`.**
+* **Phase 7 — Agent Productivity & Workspace Management**: workspace member listing, detail, and role management using the existing `WorkspaceRole` model with workspace-owner authorization boundaries; workspace name configuration with server-side validation and owner authorization; personal saved ticket views (filter/sort/view state, create/edit/delete/apply) with workspace and user isolation; workspace-level agent workload overview computed from current ticket data (assigned ticket counts, status breakdown, high/urgent workload, SLA-at-risk visibility, without persisted workload counters); and operational analytics (ticket volume, status distribution, priority distribution, resolution count, average resolution time, assignment distribution, SLA risk/breach counts) with UTC `[start, end)` date semantics and owner-only agent-level assignment analytics. Milestone: `v0.5.0-alpha`. **Phase 7 is complete and independently verified on `main`.**
 
 ## Stack
 
@@ -357,9 +358,29 @@ prisma/
 └── migrations/
 
 docs/
-└── phase-6/
-    └── operations.md
+├── phase-6/
+│   └── operations.md
+└── phase-7/
+    ├── spec.md
+    ├── task-1.md
+    ├── task-2.md
+    ├── task-3.md
+    ├── task-4.md
+    └── task-5.md
 ```
+
+## Phase 7 Documentation
+
+Detailed implementation and verification records for Phase 7 are available under `docs/phase-7/`:
+
+* [`docs/phase-7/spec.md`](docs/phase-7/spec.md) — Phase 7 feature specification and architecture expectations.
+* [`docs/phase-7/task-1.md`](docs/phase-7/task-1.md) — Team Management.
+* [`docs/phase-7/task-2.md`](docs/phase-7/task-2.md) — Workspace Settings.
+* [`docs/phase-7/task-3.md`](docs/phase-7/task-3.md) — Saved Views.
+* [`docs/phase-7/task-4.md`](docs/phase-7/task-4.md) — Agent Workload.
+* [`docs/phase-7/task-5.md`](docs/phase-7/task-5.md) — Analytics.
+
+The Phase 7 documentation records the scope, architecture, authorization and workspace-isolation boundaries, query strategies, test coverage, and exact verification results for each task.
 
 ## Phase 6 Operations
 
@@ -384,13 +405,21 @@ The operations guide covers:
 
 ## Testing & Verification
 
-Phase 6 was independently verified on `main`.
+Phase 7 was independently verified on `main`.
 
-Final verification included:
+The final Phase 7 task (Task 5 — Analytics) verification reported:
 
 ```text
-61 test files
-569 tests passed
+Phase 7 task-focused and regression tests:
+210 passed (Team Management, Workspace Settings, Saved Views, Agent Workload, Analytics)
+
+Analytics tests:
+60/60 passed
+
+Full Vitest suite:
+769 passed
+10 skipped
+2 failed (pre-existing integration/environment failures)
 
 Lint:
 0 warnings
@@ -401,25 +430,20 @@ passed
 
 Production build:
 passed
-
-Prisma migrations:
-up to date
-
-PostgreSQL:
-OK
-
-Redis:
-OK
-
-BullMQ:
-operational
 ```
 
-The final Phase 6 implementation was merged into `main` and pushed to `origin/main`.
+The Phase 7 focused and regression suites passed. The two full-suite failures are known pre-existing integration/environment failures rather than Phase 7 regressions:
+
+* `src/__tests__/outbox.atomicity.integration.test.ts`
+* `src/__tests__/sla.integration.test.ts`
+
+Both require a provisioned `DATABASE_URL_TEST` database/role and were failing on `main` before Phase 7. The production build also emits a pre-existing Next/Turbopack NFT tracing warning originating from `next.config.ts`; this is unrelated to Phase 7.
+
+The final Phase 7 implementation was merged into `main` and pushed to `origin/main`.
 
 ## Development Notes
 
-RelayDesk is developed incrementally in phases, with each phase independently verified before being merged into `main`.
+RelayDesk is developed incrementally in phases. Each phase is independently verified before being merged into `main`. The project is currently through Phase 7.
 
 The project emphasizes:
 
