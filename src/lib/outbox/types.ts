@@ -3,7 +3,9 @@ export type OutboxEventType =
   | 'TICKET_ASSIGNED'
   | 'TICKET_REPLIED'
   | 'TICKET_RESOLVED'
-  | 'SLA_AT_RISK';
+  | 'SLA_AT_RISK'
+  | 'SLA_BREACHED'
+  | 'AUTOMATION_EVALUATION';
 
 export type OutboxAggregateType = 'Ticket';
 

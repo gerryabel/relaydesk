@@ -13,6 +13,7 @@ type TicketRow = {
 };
 
 type SuppressionRow = { ticketId: string; slaType: string; sentAt: Date };
+type BreachRow = { ticketId: string; slaType: string; sentAt: Date };
 type OutboxData = { eventType: string; aggregateType: string; aggregateId: string; payload: Record<string, unknown> };
 
 // Mutable mock state shared across tests.
@@ -20,6 +21,7 @@ const mockState = {
   tickets: [] as TicketRow[],
   outboxEvents: [] as OutboxData[],
   suppressionRows: [] as SuppressionRow[],
+  breachRows: [] as BreachRow[],
   findManyCalls: 0,
 };
 
@@ -88,6 +90,34 @@ function mockSuppressionDeleteMany({ where }: { where: Prisma.SentSlaNotificatio
   return { count };
 }
 
+function mockBreachFindUnique({ where }: { where: Prisma.SentSlaBreachNotificationWhereUniqueInput }) {
+  return (
+    mockState.breachRows.find(
+      (r) => r.ticketId === where.ticketId && r.slaType === where.slaType,
+    ) ?? null
+  );
+}
+
+function mockBreachCreate({ data }: { data: Prisma.SentSlaBreachNotificationCreateInput }) {
+  const ticketId = data.ticketId as string;
+  const slaType = data.slaType as string;
+  const existing = mockState.breachRows.find(
+    (r) => r.ticketId === ticketId && r.slaType === slaType,
+  );
+  if (existing) {
+    const error = new Error("Unique constraint failed") as Error & { code: string };
+    error.code = "P2002";
+    throw error;
+  }
+  const row: BreachRow = {
+    ticketId,
+    slaType,
+    sentAt: (data.sentAt as Date) ?? new Date(),
+  };
+  mockState.breachRows.push(row);
+  return row;
+}
+
 function mockOutboxCreate({ data }: { data: Prisma.OutboxEventCreateInput }) {
   mockState.outboxEvents.push(data as OutboxData);
   return { id: `outbox-${mockState.outboxEvents.length}` };
@@ -102,6 +132,10 @@ async function mockTransaction(fn: (tx: Prisma.TransactionClient) => Promise<unk
       updateMany: vi.fn(mockSuppressionUpdateMany),
       deleteMany: vi.fn(mockSuppressionDeleteMany),
     },
+    sentSlaBreachNotification: {
+      findUnique: vi.fn(mockBreachFindUnique),
+      create: vi.fn(mockBreachCreate),
+    },
   } as unknown as Prisma.TransactionClient;
   return fn(tx);
 }
@@ -115,6 +149,10 @@ vi.mock("@/lib/db/prisma", () => ({
       create: vi.fn(mockSuppressionCreate),
       updateMany: vi.fn(mockSuppressionUpdateMany),
       deleteMany: vi.fn(mockSuppressionDeleteMany),
+    },
+    sentSlaBreachNotification: {
+      findUnique: vi.fn(mockBreachFindUnique),
+      create: vi.fn(mockBreachCreate),
     },
   },
 }));
@@ -166,6 +204,7 @@ describe("SLA evaluation", () => {
     mockState.tickets = [];
     mockState.outboxEvents = [];
     mockState.suppressionRows = [];
+    mockState.breachRows = [];
     mockState.findManyCalls = 0;
     vi.clearAllMocks();
   });
@@ -250,12 +289,16 @@ describe("SLA evaluation", () => {
 
       const summary1 = await runSlaEvaluation(now);
       expect(summary1.atRisk).toHaveLength(1);
-      expect(mockState.outboxEvents).toHaveLength(1);
+      // Only SLA_AT_RISK event is created (AUTOMATION_EVALUATION is also created)
+      const slaAtRiskEvents = mockState.outboxEvents.filter((e) => e.eventType === "SLA_AT_RISK");
+      expect(slaAtRiskEvents).toHaveLength(1);
 
       const later = new Date(now.getTime() + 60 * 60 * 1000);
       const summary2 = await runSlaEvaluation(later);
       expect(summary2.atRisk).toHaveLength(0);
-      expect(mockState.outboxEvents).toHaveLength(1);
+      // Still only one SLA_AT_RISK event
+      const slaAtRiskEventsAfter = mockState.outboxEvents.filter((e) => e.eventType === "SLA_AT_RISK");
+      expect(slaAtRiskEventsAfter).toHaveLength(1);
     });
 
     it("claims a suppression slot when creating an event", async () => {
@@ -267,6 +310,49 @@ describe("SLA evaluation", () => {
         (r) => r.ticketId === "ticket-1" && r.slaType === "response",
       );
       expect(suppressionRow).toBeDefined();
+    });
+  });
+
+  describe("breach detection", () => {
+    it("creates SLA_BREACHED + AUTOMATION_EVALUATION events when SLA breaches", async () => {
+      const breachedTicket = makeTicket({
+        id: "ticket-breached",
+        createdAt: new Date(now.getTime() - 20 * 60 * 60 * 1000),
+        responseSlaDeadline: new Date(now.getTime() - 10 * 60 * 60 * 1000),
+      });
+      mockState.tickets = [breachedTicket];
+
+      const summary = await runSlaEvaluation(now);
+      expect(summary.atRisk).toHaveLength(0);
+
+      const breachEvent = mockState.outboxEvents.find((e) => e.eventType === "SLA_BREACHED");
+      expect(breachEvent).toBeDefined();
+      expect(breachEvent?.payload.slaType).toBe("response");
+
+      const automationEvent = mockState.outboxEvents.find((e) => e.eventType === "AUTOMATION_EVALUATION");
+      expect(automationEvent).toBeDefined();
+      expect(automationEvent?.payload.triggerType).toBe("sla.breached");
+
+      const breachRow = mockState.breachRows.find(
+        (r) => r.ticketId === "ticket-breached" && r.slaType === "response",
+      );
+      expect(breachRow).toBeDefined();
+    });
+
+    it("does not create duplicate breach events on re-evaluation", async () => {
+      const breachedTicket = makeTicket({
+        id: "ticket-breached-dup",
+        createdAt: new Date(now.getTime() - 20 * 60 * 60 * 1000),
+        responseSlaDeadline: new Date(now.getTime() - 10 * 60 * 60 * 1000),
+      });
+      mockState.tickets = [breachedTicket];
+
+      await runSlaEvaluation(now);
+      expect(mockState.outboxEvents).toHaveLength(2);
+
+      await runSlaEvaluation(new Date(now.getTime() + 60 * 60 * 1000));
+      // No new events should be created for the same breach
+      expect(mockState.outboxEvents).toHaveLength(2);
     });
   });
 
