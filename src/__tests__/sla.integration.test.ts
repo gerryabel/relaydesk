@@ -50,7 +50,19 @@ describe("SLA evaluation integration", () => {
   });
 
   afterAll(async () => {
-    // Clean up the test workspace and user
+    // Clean up the test workspace and user (in correct order to avoid FK violations)
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateType: "Ticket" },
+    });
+    await prisma.sentSlaBreachNotification.deleteMany({});
+    await prisma.sentSlaNotification.deleteMany({});
+    await prisma.automationExecution.deleteMany({});
+    await prisma.automationRule.deleteMany({
+      where: { workspaceId },
+    });
+    await prisma.ticket.deleteMany({
+      where: { workspaceId },
+    });
     await prisma.workspace.deleteMany({
       where: { id: workspaceId },
     });
@@ -70,6 +82,9 @@ describe("SLA evaluation integration", () => {
     const ticketIds = workspaceTickets.map((t) => t.id);
 
     await prisma.sentSlaNotification.deleteMany({
+      where: { ticketId: { in: ticketIds } },
+    });
+    await prisma.sentSlaBreachNotification.deleteMany({
       where: { ticketId: { in: ticketIds } },
     });
     await prisma.outboxEvent.deleteMany({

@@ -100,6 +100,9 @@ describe('customer ticket linking', () => {
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
         },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
+        },
       } as never;
 
       return worker(txClient);
@@ -127,6 +130,9 @@ describe('customer ticket linking', () => {
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
         },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
+        },
       } as never;
 
       return worker(txClient);
@@ -152,6 +158,9 @@ describe('customer ticket linking', () => {
         },
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
+        },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
         },
       } as never;
 

@@ -33,6 +33,15 @@ describe('outbox transactional atomicity', () => {
   });
 
   afterAll(async () => {
+    // Clean up all test data
+    await prisma.outboxEvent.deleteMany({
+      where: { aggregateType: 'Ticket' },
+    });
+    await prisma.ticket.deleteMany({});
+    await prisma.workspace.deleteMany({});
+    await prisma.user.deleteMany({
+      where: { id: { in: [actorId, assigneeId] } },
+    });
     await prisma.$disconnect();
   });
 

@@ -148,6 +148,9 @@ describe('ticket assignment services', () => {
         ticketActivity: {
           create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never),
         },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
+        },
       } as never;
 
       return worker(txClient);
@@ -236,6 +239,9 @@ describe('ticket assignment services', () => {
         },
         notification: {
           create: vi.fn().mockResolvedValue({ id: 'notification-1' } as never),
+        },
+        outboxEvent: {
+          create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never),
         },
       } as never;
 
