@@ -3,6 +3,7 @@ import type { OutboxHandler, OutboxHandlerResult } from './types';
 import type { OutboxEventRecord } from '@/lib/outbox/types';
 import {
   completeHandoff,
+  skipExecution,
   DEFAULT_EXECUTION_LEASE_MS,
 } from '@/lib/automation/execution-service';
 import {
@@ -42,7 +43,7 @@ export const handleAutomationEvaluation: OutboxHandler = async (
   const { automationContext } = payload;
 
   // Recursion prevention: skip events caused by automation
-  if (shouldEvaluateEvent(automationContext)) {
+  if (!shouldEvaluateEvent(automationContext)) {
     return { status: 'success' };
   }
 
@@ -88,12 +89,7 @@ export const handleAutomationEvaluation: OutboxHandler = async (
     }
 
     const rule = matchingRules[0];
-    const actions = rule.actions;
-
-    // Zero-action rule → skip (defensive)
-    if (!actions || actions.length === 0) {
-      return { status: 'success' };
-    }
+    const actions = rule.actions ?? [];
 
     // Create execution record (auto-commit, P2002-safe)
     // The unique constraint on (sourceEventId, ruleId) prevents duplicates.
@@ -121,6 +117,12 @@ export const handleAutomationEvaluation: OutboxHandler = async (
         return { status: 'success' };
       }
       throw error;
+    }
+
+    // Zero-action matched rule → skip with lease-fenced transition
+    if (actions.length === 0) {
+      await skipExecution(executionId, 'no_actions', workerId);
+      return { status: 'success' };
     }
 
     // Atomic handoff: create all intents + transition to awaiting_actions
