@@ -98,6 +98,13 @@ describe('ticket activity services', () => {
     const createSpy = vi.spyOn(sharedPrisma.ticket, 'create').mockResolvedValue(fakeTicket as never);
     const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
       const txClient = {
+        workspaceSlaPolicy: {
+          findUnique: vi.fn().mockResolvedValue({
+            priority: 'medium',
+            responseMinutes: 480,
+            resolutionMinutes: 4320,
+          } as never),
+        },
         ticket: { create: createSpy },
         ticketActivity: { create: vi.fn().mockResolvedValue(fakeActivity as never) },
         outboxEvent: { create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never) },

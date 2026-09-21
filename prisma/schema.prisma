@@ -146,6 +146,22 @@ model Workspace {
   savedViews SavedView[]
   automationRules AutomationRule[]
   automationExecutions AutomationExecution[]
+  slaPolicies WorkspaceSlaPolicy[]
+}
+
+model WorkspaceSlaPolicy {
+  id                String         @id @default(cuid())
+  workspaceId       String
+  priority          TicketPriority
+  responseMinutes   Int
+  resolutionMinutes Int
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, priority])
+  @@index([workspaceId])
 }
 
 enum SavedViewType {

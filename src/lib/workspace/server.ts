@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db/prisma';
 import type { Prisma } from '@/generated/prisma';
 import { getServerAuthSession } from '@/lib/auth/session';
+import { buildDefaultSlaPolicyData } from '@/lib/workspace/sla-policy';
 
 const DEFAULT_WORKSPACE_NAME = 'My Workspace';
 
@@ -124,6 +125,10 @@ export async function ensureDefaultWorkspace(userId: string): Promise<Membership
         data: {
           name: await computeWorkspaceName(userId),
         },
+      });
+
+      await tx.workspaceSlaPolicy.createMany({
+        data: buildDefaultSlaPolicyData(workspace.id),
       });
 
       return tx.membership.create({

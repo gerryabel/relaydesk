@@ -1,18 +1,21 @@
 import { getWorkspaceSettings } from '@/lib/workspace/settings';
+import { getWorkspaceSlaPolicies } from '@/lib/workspace/sla-policy';
 import { getCurrentMembership } from '@/lib/workspace/server';
 import { ForbiddenError, UnauthorizedError } from '@/lib/workspace/server';
 import WorkspaceNameForm from '@/components/workspace/workspace-name-form';
+import SlaPolicyForm from '@/components/workspace/sla-policy-form';
 import { DashboardErrorState } from '@/components/ui/error-state';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 
 export default async function SettingsPage() {
   let currentRole: 'owner' | 'member';
   let settings: { id: string; name: string };
+  let slaPolicies: Awaited<ReturnType<typeof getWorkspaceSlaPolicies>>;
 
   try {
     const membership = await getCurrentMembership();
     currentRole = membership.role;
     settings = await getWorkspaceSettings();
+    slaPolicies = await getWorkspaceSlaPolicies();
   } catch (error) {
     if (error instanceof UnauthorizedError) {
       return (
@@ -43,15 +46,9 @@ export default async function SettingsPage() {
           </p>
         </header>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>General</CardTitle>
-            <CardDescription>Basic workspace configuration.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <WorkspaceNameForm initialName={settings.name} canEdit={canEdit} />
-          </CardContent>
-        </Card>
+        <WorkspaceNameForm initialName={settings.name} canEdit={canEdit} />
+
+        <SlaPolicyForm policies={slaPolicies} canEdit={canEdit} />
       </div>
     </div>
   );
