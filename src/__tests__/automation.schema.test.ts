@@ -11,11 +11,13 @@ describe('automation schema', () => {
       description: 'Send notification when high priority ticket is created',
       enabled: true,
       triggerType: 'ticket.created',
-      conditions: [
-        { field: 'priority', operator: 'equals', value: 'high' },
-      ],
+      conditions: {
+        conditions: [
+          { field: 'priority', operator: 'equals', value: 'high' },
+        ],
+      },
       actions: [
-        { actionType: 'send_notification', actionConfig: { channel: 'email' } },
+        { actionType: 'notification', actionConfig: { recipientId: 'user-1', message: 'hi' } },
       ],
     };
 
@@ -51,11 +53,13 @@ describe('automation schema', () => {
     it('rejects more than 10 conditions', () => {
       const result = automationRuleConfigSchema.safeParse({
         ...validRule,
-        conditions: Array.from({ length: 11 }, (_, i) => ({
-          field: `field${i}`,
-          operator: 'equals',
-          value: i,
-        })),
+        conditions: {
+          conditions: Array.from({ length: 11 }, (_, i) => ({
+            field: `field${i}`,
+            operator: 'equals',
+            value: i,
+          })),
+        },
       });
       expect(result.success).toBe(false);
     });
@@ -71,9 +75,9 @@ describe('automation schema', () => {
     it('rejects more than 5 actions', () => {
       const result = automationRuleConfigSchema.safeParse({
         ...validRule,
-        actions: Array.from({ length: 6 }, (_, i) => ({
-          actionType: `action${i}`,
-          actionConfig: {},
+        actions: Array.from({ length: 6 }, () => ({
+          actionType: 'assign',
+          actionConfig: { assigneeId: 'user-1' },
         })),
       });
       expect(result.success).toBe(false);
@@ -94,8 +98,8 @@ describe('automation schema', () => {
         name: 'Test Rule',
         enabled: true,
         triggerType: 'ticket.created',
-        conditions: [{ field: 'priority', operator: 'equals', value: 'high' }],
-        actions: [{ actionType: 'notify', actionConfig: {} }],
+        conditions: { conditions: [{ field: 'priority', operator: 'equals', value: 'high' }] },
+        actions: [{ actionType: 'unassign', actionConfig: {} }],
       });
 
       expect(result.valid).toBe(true);
@@ -108,7 +112,7 @@ describe('automation schema', () => {
         name: '',
         enabled: true,
         triggerType: '',
-        conditions: [],
+        conditions: { conditions: [] },
         actions: [],
       });
 

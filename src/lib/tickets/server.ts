@@ -138,6 +138,15 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
         ticketId: ticket.id,
         actorId: membership.userId,
         automationContext: createAutomationContext({ actorId: membership.userId }),
+        triggerPayload: {
+          ticketId: ticket.id,
+          workspaceId: membership.workspaceId,
+          priority: parsed.priority,
+          status: 'open',
+          assignedToId: null,
+          customerId: null,
+          createdById: membership.userId,
+        },
       },
       ticket.id,
     );
@@ -452,11 +461,12 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
           triggerPayload: {
             ticketId: updated.id,
             workspaceId: membership.workspaceId,
-            ...(hasStatusChange ? { from: existing.status, to: parsed.status } : {}),
-            ...(hasPriorityChange ? { from: existing.priority, to: parsed.priority } : {}),
+            ...(hasStatusChange ? { from: existing.status, to: parsed.status, status: parsed.status } : {}),
+            ...(hasPriorityChange ? { from: existing.priority, to: parsed.priority, priority: parsed.priority } : {}),
             ...(hasCustomerChange ? {
               from: existing.customerId,
               to: updated.customerId,
+              customerId: updated.customerId,
             } : {}),
           },
         },

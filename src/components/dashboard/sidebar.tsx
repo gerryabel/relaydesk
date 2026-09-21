@@ -8,6 +8,7 @@ const navigation = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/dashboard/tickets', label: 'Tickets' },
   { href: '/dashboard/tags', label: 'Tags' },
+  { href: '/dashboard/automations', label: 'Automations' },
   { href: '/dashboard/members', label: 'Members' },
   { href: '/dashboard/saved-views', label: 'Saved Views' },
   { href: '/dashboard/workload', label: 'Workload' },

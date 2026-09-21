@@ -89,6 +89,16 @@ export type NotificationActionConfig = z.infer<typeof notificationActionSchema>;
  * Map of action type → Zod schema for its config.
  * Used by the registry to validate action configs before execution.
  */
+/**
+ * Generic action entry schema — used by the rule builder to validate
+ * the shape of a single action entry (actionType + actionConfig) before
+ * deep-validating the config against the type-specific schema.
+ */
+export const automationActionConfigSchema = z.object({
+  actionType: automationActionTypeSchema,
+  actionConfig: z.record(z.string(), z.unknown()),
+});
+
 export const ACTION_CONFIG_SCHEMAS: Record<AutomationActionType, z.ZodTypeAny> = {
   assign: assignActionSchema,
   unassign: unassignActionSchema,

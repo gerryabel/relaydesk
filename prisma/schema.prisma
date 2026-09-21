@@ -430,6 +430,7 @@ model AutomationRule {
   name          String
   description   String?
   enabled       Boolean  @default(true)
+  priority      Int      @default(0)
   triggerType   String
   conditions    Json     @default("[]")
   actions       Json     @default("[]")
@@ -444,12 +445,14 @@ model AutomationRule {
   @@unique([workspaceId, name])
   @@index([workspaceId])
   @@index([workspaceId, enabled])
+  @@index([workspaceId, triggerType, priority])
 }
 
 model AutomationExecution {
   id                  String                    @id @default(cuid())
   workspaceId         String
-  ruleId              String
+  ruleId              String?
+  ruleNameSnapshot    String
   sourceEventType     String
   sourceEventId       String
   sourceAggregateId   String
@@ -466,7 +469,7 @@ model AutomationExecution {
   updatedAt           DateTime                  @updatedAt
 
   workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  rule      AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  rule      AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
   ticket    Ticket?         @relation(fields: [ticketId], references: [id], onDelete: SetNull)
   actions   AutomationActionExecution[]
 

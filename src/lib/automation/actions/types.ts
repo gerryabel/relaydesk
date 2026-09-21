@@ -26,7 +26,7 @@ export interface ActionContext {
    */
   automationContext: {
     causedByAutomation: boolean;
-    ruleId: string;
+    ruleId: string | null;
     executionId: string;
     actionIndex: number;
     actorId: string | null;
