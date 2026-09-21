@@ -20,7 +20,8 @@ export class ExecutionClaimError extends Error {
 
 export interface CreateExecutionInput {
   workspaceId: string;
-  ruleId: string;
+  ruleId: string | null;
+  ruleNameSnapshot: string;
   sourceEventType: string;
   sourceEventId: string;
   sourceAggregateId: string;
@@ -36,13 +37,14 @@ export interface ActionResult {
 }
 
 export async function createExecution(input: CreateExecutionInput) {
-  const { sourceEventId, ruleId } = input;
+  const { sourceEventId } = input;
 
   try {
     const execution = await prisma.automationExecution.create({
       data: {
         workspaceId: input.workspaceId,
         ruleId: input.ruleId,
+        ruleNameSnapshot: input.ruleNameSnapshot,
         sourceEventType: input.sourceEventType,
         sourceEventId: input.sourceEventId,
         sourceAggregateId: input.sourceAggregateId,
@@ -56,13 +58,14 @@ export async function createExecution(input: CreateExecutionInput) {
     return execution;
   } catch (error) {
     if (isUniqueConstraintError(error)) {
-      const existing = await prisma.automationExecution.findUnique({
-        where: {
-          sourceEventId_ruleId: {
-            sourceEventId,
-            ruleId,
-          },
-        },
+      // P2002 only fires when ruleId is non-NULL: PostgreSQL unique
+      // constraints allow multiple NULLs in (sourceEventId, ruleId), so
+      // the compound lookup would miss executions created after a rule was
+      // deleted (ruleId set to NULL by onDelete: SetNull). The fallback
+      // finds any execution sharing the sourceEventId as a race-condition
+      // safety net — another worker may have already created it.
+      const existing = await prisma.automationExecution.findFirst({
+        where: { sourceEventId },
       });
 
       if (existing) {
@@ -147,7 +150,7 @@ export async function completeHandoff(
         0,
         execution.workspaceId,
         execution.ticketId ?? '',
-        execution.ruleId,
+        execution.ruleId ?? null,
         null,
       );
 

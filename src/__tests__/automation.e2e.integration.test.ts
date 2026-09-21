@@ -133,6 +133,7 @@ describe('automation action execution E2E', () => {
           id: executionId,
           workspaceId,
           ruleId,
+          ruleNameSnapshot: 'E2E Test Rule',
           sourceEventType: 'AUTOMATION_EVALUATION',
           sourceEventId: 'e2e-evt-1',
           sourceAggregateId: ticketId,
@@ -184,6 +185,7 @@ describe('automation action execution E2E', () => {
         data: {
           workspaceId,
           ruleId,
+          ruleNameSnapshot: 'E2E Test Rule',
           sourceEventType: 'AUTOMATION_EVALUATION',
           sourceEventId: 'e2e-evt-2',
           sourceAggregateId: ticketId,
@@ -261,6 +263,7 @@ describe('automation action execution E2E', () => {
         data: {
           workspaceId,
           ruleId,
+          ruleNameSnapshot: 'E2E Test Rule',
           sourceEventType: 'AUTOMATION_EVALUATION',
           sourceEventId: 'e2e-evt-3',
           sourceAggregateId: ticketId,
@@ -329,6 +332,7 @@ describe('automation action execution E2E', () => {
           id: executionId,
           workspaceId,
           ruleId,
+          ruleNameSnapshot: 'E2E Test Rule',
           sourceEventType: 'AUTOMATION_EVALUATION',
           sourceEventId: 'e2e-evt-4',
           sourceAggregateId: ticketId,

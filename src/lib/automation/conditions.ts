@@ -18,7 +18,7 @@ export const conditionSchema = z.object({
 export type Condition = z.infer<typeof conditionSchema>;
 
 export const conditionGroupSchema = z.object({
-  conditions: z.array(conditionSchema).min(1),
+  conditions: z.array(conditionSchema).min(1).max(10, 'At most 10 conditions are allowed'),
 });
 export type ConditionGroup = z.infer<typeof conditionGroupSchema>;
 

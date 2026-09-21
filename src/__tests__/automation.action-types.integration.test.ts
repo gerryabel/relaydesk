@@ -112,6 +112,7 @@ describe('internal-note and notification actions', () => {
       data: {
         workspaceId,
         ruleId,
+        ruleNameSnapshot: 'Test Rule',
         sourceEventType: 'AUTOMATION_EVALUATION',
         sourceEventId: 'evt-note-1',
         sourceAggregateId: ticketId,
@@ -153,6 +154,7 @@ describe('internal-note and notification actions', () => {
       data: {
         workspaceId,
         ruleId,
+        ruleNameSnapshot: 'Test Rule',
         sourceEventType: 'AUTOMATION_EVALUATION',
         sourceEventId: 'evt-notif-1',
         sourceAggregateId: ticketId,

@@ -114,7 +114,7 @@ export async function queueAutomationActionExecution(
   actionIndex: number,
   workspaceId: string,
   ticketId: string,
-  ruleId: string,
+  ruleId: string | null,
   actorId: string | null,
 ): Promise<void> {
   await createOutboxEvent(
@@ -414,7 +414,7 @@ async function scheduleNextOrFinalize(
   tx: Prisma.TransactionClient,
   executionId: string,
   currentActionIndex: number,
-  execution: { workspaceId: string; ticketId: string | null; ruleId: string },
+  execution: { workspaceId: string; ticketId: string | null; ruleId: string | null },
 ): Promise<void> {
   const nextAction = await tx.automationActionExecution.findFirst({
     where: {
@@ -444,7 +444,7 @@ async function scheduleNextOrFinalize(
       nextAction.actionIndex,
       execution.workspaceId,
       ticketId,
-      execution.ruleId,
+      execution.ruleId ?? null,
       // Actor id threaded from automation context.
       null,
     );

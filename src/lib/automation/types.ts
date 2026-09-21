@@ -16,7 +16,7 @@ export type AutomationTriggerType = (typeof AUTOMATION_TRIGGER_TYPES)[keyof type
 
 export interface AutomationContext {
   causedByAutomation: boolean;
-  ruleId?: string;
+  ruleId?: string | null;
   executionId?: string;
   actionIndex?: number;
   actorId: string | null;
