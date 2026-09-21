@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db/prisma';
 import type { Prisma } from '@/generated/prisma';
+import { queueAutomationActionExecution } from '@/lib/automation/actions/execution';
 
 export const DEFAULT_EXECUTION_LEASE_MS = 5 * 60 * 1000;
 
@@ -106,6 +107,17 @@ export async function completeHandoff(
         throw new Error(`Intent count mismatch: expected ${expectedCount}, got ${actualCount}`);
       }
 
+      // Load the execution to get workspaceId, ticketId, ruleId for the
+      // first-action outbox event.
+      const execution = await tx.automationExecution.findUnique({
+        where: { id: executionId },
+        select: { workspaceId: true, ticketId: true, ruleId: true },
+      });
+
+      if (!execution) {
+        throw new Error(`Handoff failed: execution ${executionId} not found`);
+      }
+
       const { count } = await tx.automationExecution.updateMany({
         where: {
           id: executionId,
@@ -124,6 +136,20 @@ export async function completeHandoff(
       if (count !== 1) {
         throw new Error(`Handoff failed: execution ${executionId} not in expected state`);
       }
+
+      // Create the first action's outbox event in the SAME transaction.
+      // This guarantees that a committed awaiting_actions execution always
+      // has a durable first-action event — we never leave an execution
+      // stranded without a way to drive its first action.
+      await queueAutomationActionExecution(
+        tx,
+        executionId,
+        0,
+        execution.workspaceId,
+        execution.ticketId ?? '',
+        execution.ruleId,
+        null,
+      );
 
       const updated = await tx.automationExecution.findUnique({
         where: { id: executionId },

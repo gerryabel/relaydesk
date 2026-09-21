@@ -5,7 +5,8 @@ export type OutboxEventType =
   | 'TICKET_RESOLVED'
   | 'SLA_AT_RISK'
   | 'SLA_BREACHED'
-  | 'AUTOMATION_EVALUATION';
+  | 'AUTOMATION_EVALUATION'
+  | 'AUTOMATION_ACTION_EXECUTION';
 
 export type OutboxAggregateType = 'Ticket';
 

@@ -50,18 +50,28 @@ describe("SLA evaluation integration", () => {
   });
 
   afterAll(async () => {
-    // Clean up the test workspace and user (in correct order to avoid FK violations)
+    // Clean up the test workspace and user (in correct order to avoid FK violations).
+    // Scope all deletes to this test file's data to avoid interfering with
+    // concurrent test files that share the same database.
+    const workspaceTickets = await prisma.ticket.findMany({
+      where: { workspaceId, title: { startsWith: "SLA-E2E-" } },
+      select: { id: true },
+    });
+    const ticketIds = workspaceTickets.map((t) => t.id);
+
     await prisma.outboxEvent.deleteMany({
-      where: { aggregateType: "Ticket" },
+      where: { aggregateType: "Ticket", aggregateId: { in: ticketIds } },
     });
     await prisma.sentSlaBreachNotification.deleteMany({});
     await prisma.sentSlaNotification.deleteMany({});
-    await prisma.automationExecution.deleteMany({});
+    await prisma.automationExecution.deleteMany({
+      where: { workspaceId },
+    });
     await prisma.automationRule.deleteMany({
       where: { workspaceId },
     });
     await prisma.ticket.deleteMany({
-      where: { workspaceId },
+      where: { workspaceId, title: { startsWith: "SLA-E2E-" } },
     });
     await prisma.workspace.deleteMany({
       where: { id: workspaceId },
