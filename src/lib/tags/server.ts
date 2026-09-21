@@ -2,6 +2,8 @@ import { prisma } from '@/lib/db/prisma';
 import { getCurrentMembership } from '@/lib/workspace/server';
 import { createTagSchema, updateTagSchema, type CreateTagInput, type UpdateTagInput } from '@/lib/tags/schema';
 import { TicketNotFoundError as TicketsTicketNotFoundError } from '@/lib/tickets/server';
+import { queueAutomationEvaluation } from '@/lib/automation/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
 
 export const TicketNotFoundError = TicketsTicketNotFoundError;
 
@@ -276,6 +278,24 @@ export async function addTagToTicket(ticketId: string, tagId: string) {
           metadata: { tagId: tag.id, tagName: tag.name },
         },
       });
+
+      await queueAutomationEvaluation(
+        tx,
+        'ticket.tag_added',
+        {
+          workspaceId: membership.workspaceId,
+          ticketId: ticket.id,
+          actorId: membership.userId,
+          automationContext: createAutomationContext({ actorId: membership.userId }),
+          triggerPayload: {
+            ticketId: ticket.id,
+            workspaceId: membership.workspaceId,
+            tagId: tag.id,
+            tagName: tag.name,
+          },
+        },
+        ticket.id,
+      );
     });
   } catch (error) {
     if (isUniqueTicketTagError(error)) {
@@ -331,6 +351,24 @@ export async function removeTagFromTicket(ticketId: string, tagId: string) {
         metadata: { tagId: tag.id, tagName: tag.name },
       },
     });
+
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.tag_removed',
+      {
+        workspaceId: membership.workspaceId,
+        ticketId: ticket.id,
+        actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
+        triggerPayload: {
+          ticketId: ticket.id,
+          workspaceId: membership.workspaceId,
+          tagId: tag.id,
+          tagName: tag.name,
+        },
+      },
+      ticket.id,
+    );
   });
 }
 

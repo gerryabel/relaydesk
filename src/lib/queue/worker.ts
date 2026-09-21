@@ -7,8 +7,9 @@ import {
 } from '@/lib/outbox/outbox';
 import { prisma } from '@/lib/db/prisma';
 import type { OutboxEventRecord } from '@/lib/outbox/types';
-import type { OutboxHandlerResult } from './handlers/types';
+import type { OutboxHandlerResult, OutboxHandlerContext } from './handlers/types';
 import { PermanentError, RetryableError } from '@/lib/queue/errors';
+import { DEFAULT_RETRY_POLICY } from './retry-policy';
 import { info, warn, error as logError } from './logger';
 
 /**
@@ -26,6 +27,8 @@ export interface OutboxJob {
   name?: string;
   data: unknown;
   attemptsMade?: number;
+  /** Total attempts configured for the job. Optional so unit tests don't need to set it. */
+  opts?: { attempts?: number };
 }
 
 function isFailureResult(result: unknown): result is { status: 'failure'; error: { message: string; retryable: boolean } } {
@@ -97,11 +100,13 @@ export async function processOutboxJob(job: OutboxJob): Promise<{ handled: boole
 
   const eventRecord = event as unknown as OutboxEventRecord;
   const startedAt = Date.now();
+  const maxAttempts = job.opts?.attempts ?? DEFAULT_RETRY_POLICY.maxAttempts;
 
   info('Handler starting', logContext);
 
   try {
-    const handlerResult: OutboxHandlerResult | void = await handler(eventRecord);
+    const handlerContext: OutboxHandlerContext = { attempt, maxAttempts };
+    const handlerResult: OutboxHandlerResult | void = await handler(eventRecord, handlerContext);
     const durationMs = Date.now() - startedAt;
 
     if (isFailureResult(handlerResult)) {

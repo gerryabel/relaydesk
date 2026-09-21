@@ -1,5 +1,8 @@
 import { handleEmailOutboxEvent } from './email-handler';
 import { handleSlaAtRiskEvent } from './sla';
+import { handleSlaBreachedEvent } from './sla-breached';
+import { handleAutomationEvaluation } from './automation';
+import { handleAutomationActionExecution } from './automation-action';
 
 export const HandlerRegistry: Record<import('@/lib/outbox/types').OutboxEventType, import('./types').OutboxHandler> = {
   TICKET_CREATED: async () => {},
@@ -7,6 +10,9 @@ export const HandlerRegistry: Record<import('@/lib/outbox/types').OutboxEventTyp
   TICKET_REPLIED: async () => {},
   TICKET_RESOLVED: async () => {},
   SLA_AT_RISK: handleSlaAtRiskEvent,
+  SLA_BREACHED: handleSlaBreachedEvent,
+  AUTOMATION_EVALUATION: handleAutomationEvaluation,
+  AUTOMATION_ACTION_EXECUTION: handleAutomationActionExecution,
 };
 
 export function getHandler(eventType: string): import('./types').OutboxHandler {

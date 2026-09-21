@@ -17,6 +17,8 @@ describe('outbox transactional atomicity', () => {
   let prisma: PrismaClient;
   let actorId: string;
   let assigneeId: string;
+  const createdWorkspaceIds: string[] = [];
+  const createdOutboxEventIds: string[] = [];
 
   beforeAll(async () => {
     prisma = createPrismaClient();
@@ -33,6 +35,18 @@ describe('outbox transactional atomicity', () => {
   });
 
   afterAll(async () => {
+    // Scoped cleanup: only delete data created by this test file.
+    // Order matters — delete children before parents to avoid FK violations.
+    await prisma.outboxEvent.deleteMany({ where: { id: { in: createdOutboxEventIds } } });
+    // Also clean up any Ticket outbox events for workspaces created in this test
+    const allTicketIds = await prisma.ticket.findMany({
+      where: { workspaceId: { in: createdWorkspaceIds } },
+      select: { id: true },
+    }).then(tickets => tickets.map(t => t.id));
+    await prisma.outboxEvent.deleteMany({ where: { aggregateType: 'Ticket', aggregateId: { in: allTicketIds } } });
+    await prisma.ticket.deleteMany({ where: { workspaceId: { in: createdWorkspaceIds } } });
+    await prisma.workspace.deleteMany({ where: { id: { in: createdWorkspaceIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: [actorId, assigneeId] } } });
     await prisma.$disconnect();
   });
 
@@ -40,6 +54,7 @@ describe('outbox transactional atomicity', () => {
     const workspace = await prisma.workspace.create({
       data: { id: createId('workspace'), name: `Atomic Workspace ${Date.now()}` },
     });
+    createdWorkspaceIds.push(workspace.id);
 
     await prisma.$transaction(async (tx) => {
       const ticket = await tx.ticket.create({
@@ -61,7 +76,7 @@ describe('outbox transactional atomicity', () => {
         },
       });
 
-      await tx.outboxEvent.create({
+      const outboxEvent = await tx.outboxEvent.create({
         data: {
           eventType: 'TICKET_ASSIGNED',
           aggregateType: 'Ticket',
@@ -75,6 +90,7 @@ describe('outbox transactional atomicity', () => {
           },
         },
       });
+      createdOutboxEventIds.push(outboxEvent.id);
     });
 
     const ticket = await prisma.ticket.findFirst({ where: { workspaceId: workspace.id, title: 'Atomic Ticket' } });
@@ -94,6 +110,7 @@ describe('outbox transactional atomicity', () => {
     const workspace = await prisma.workspace.create({
       data: { id: createId('workspace'), name: `Rollback Workspace ${Date.now()}` },
     });
+    createdWorkspaceIds.push(workspace.id);
 
     await expect(
       prisma.$transaction(async (tx) => {

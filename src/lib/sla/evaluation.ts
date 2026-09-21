@@ -5,6 +5,9 @@ import {
   type SlaMonitoringStatus,
 } from "@/lib/tickets/sla";
 import { createOutboxEvent } from "@/lib/outbox/outbox";
+import { queueAutomationEvaluation } from "@/lib/automation/outbox";
+import { createAutomationContext } from "@/lib/automation/context";
+import { claimBreachSlot } from "./breach";
 import type { SlaType } from "./duplicate-suppression";
 
 export const SLA_EVALUATION_BATCH_SIZE = 100;
@@ -183,7 +186,54 @@ async function evaluateSlaType(
     return "none";
   }
 
-  if (status === "breached" || status === "completed") {
+  if (status === "breached") {
+    // Atomically claim a breach slot and emit SLA_BREACHED + AUTOMATION_EVALUATION
+    // events transactionally. The SentSlaBreachNotification row is a durable
+    // deduplication marker — once claimed, future evaluations are no-ops.
+    const breachResult = await claimBreachSlot(prisma, ticket.id, slaType, now);
+    if (breachResult.isNew) {
+      await prisma.$transaction(async (tx) => {
+        await createOutboxEvent(
+          {
+            eventType: "SLA_BREACHED",
+            aggregateType: "Ticket",
+            aggregateId: ticket.id,
+            payload: {
+              ticketId: ticket.id,
+              slaType,
+              workspaceId: ticket.workspaceId,
+              assignedToId: ticket.assignedToId,
+            },
+          },
+          tx,
+        );
+
+        await queueAutomationEvaluation(
+          tx,
+          "sla.breached",
+          {
+            workspaceId: ticket.workspaceId,
+            ticketId: ticket.id,
+            actorId: null,
+            automationContext: createAutomationContext({ actorId: null }),
+            triggerPayload: {
+              ticketId: ticket.id,
+              workspaceId: ticket.workspaceId,
+              slaType,
+              assignedToId: ticket.assignedToId,
+            },
+          },
+          ticket.id,
+        );
+      });
+    }
+    // Clear the suppression slot for this specific SLA type so that a
+    // future re-entry into at_risk can generate a new notification.
+    await releaseSlotForType(ticket.id, slaType);
+    return "cleared";
+  }
+
+  if (status === "completed") {
     // Clear the suppression slot for this specific SLA type so that a
     // future re-entry into at_risk can generate a new notification.
     await releaseSlotForType(ticket.id, slaType);
