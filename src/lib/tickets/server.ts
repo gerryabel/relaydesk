@@ -6,8 +6,12 @@ import type { CreateTicketInput, UpdateTicketInput, AssignTicketInput } from '@/
 import { mapTicketSortToOrderBy, normalizeTicketSort, type TicketSortInput } from '@/lib/tickets/sort';
 import { normalizeTicketPagination, type TicketPaginationResult } from '@/lib/tickets/pagination';
 import { assertTransitionAllowed } from '@/lib/tickets/workflow';
-import { calculateResponseDeadline, calculateResolutionDeadline } from '@/lib/tickets/sla';
 import type { Prisma } from '@/generated/prisma';
+import {
+  getWorkspaceSlaPolicy,
+  toResponseDeadlineMs,
+  toResolutionDeadlineMs,
+} from '@/lib/workspace/sla-policy';
 import { assertCustomerInWorkspace, CustomerNotInWorkspaceError } from '@/lib/customers/server';
 import {
   createTicketAssignedNotification,
@@ -79,10 +83,16 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
   const membership = await getCurrentMembership();
   const now = new Date();
 
-  const responseSlaDeadline = calculateResponseDeadline(now, parsed.priority);
-  const resolutionSlaDeadline = calculateResolutionDeadline(now, parsed.priority);
-
   return prisma.$transaction(async (tx) => {
+    const policy = await getWorkspaceSlaPolicy(
+      tx,
+      membership.workspaceId,
+      parsed.priority,
+    );
+
+    const responseSlaDeadline = new Date(now.getTime() + toResponseDeadlineMs(policy));
+    const resolutionSlaDeadline = new Date(now.getTime() + toResolutionDeadlineMs(policy));
+
     const ticket = await tx.ticket.create({
       data: {
         workspaceId: membership.workspaceId,

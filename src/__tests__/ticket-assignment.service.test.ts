@@ -227,6 +227,13 @@ describe('ticket assignment services', () => {
   it('preserves existing create/update/close/getTicketById behavior', async () => {
     const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
       const txClient = {
+        workspaceSlaPolicy: {
+          findUnique: vi.fn().mockResolvedValue({
+            priority: 'medium',
+            responseMinutes: 480,
+            resolutionMinutes: 4320,
+          } as never),
+        },
         ticket: {
           create: vi.fn().mockResolvedValue(fakeTicket as never),
           update: vi.fn().mockImplementation((args: never) => {

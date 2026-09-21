@@ -18,17 +18,21 @@ vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
 }));
 
-vi.mock('@/lib/tickets/sla', () => ({
-  getSlaPolicy: vi.fn(() => ({
-    priority: 'medium',
-    responseDurationMs: 12 * 60 * 60 * 1000,
-    resolutionDurationMs: 24 * 60 * 60 * 1000,
-  })),
-  calculateResponseDeadline: vi.fn((start: Date) => new Date(start.getTime() + 12 * 60 * 60 * 1000)),
-  calculateResolutionDeadline: vi.fn((start: Date) => new Date(start.getTime() + 24 * 60 * 60 * 1000)),
-  getResponseSlaStatus: vi.fn(() => 'pending'),
-  getResolutionSlaStatus: vi.fn(() => 'pending'),
-}));
+vi.mock('@/lib/tickets/sla', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tickets/sla')>();
+  return {
+    ...actual,
+    getSlaPolicy: vi.fn(() => ({
+      priority: 'medium',
+      responseDurationMs: 12 * 60 * 60 * 1000,
+      resolutionDurationMs: 24 * 60 * 60 * 1000,
+    })),
+    calculateResponseDeadline: vi.fn((start: Date) => new Date(start.getTime() + 12 * 60 * 60 * 1000)),
+    calculateResolutionDeadline: vi.fn((start: Date) => new Date(start.getTime() + 24 * 60 * 60 * 1000)),
+    getResponseSlaStatus: vi.fn(() => 'pending'),
+    getResolutionSlaStatus: vi.fn(() => 'pending'),
+  };
+});
 
 const mockedGetCurrentMembership = vi.mocked(getCurrentMembership);
 
@@ -80,6 +84,15 @@ describe('ticket services', () => {
   it('createTicket creates a ticket in the current workspace', async () => {
     const transactionSpy = vi.spyOn(sharedPrisma, '$transaction').mockImplementation(async (worker) => {
       const txClient = {
+        workspaceSlaPolicy: {
+          findUnique: vi.fn().mockResolvedValue({
+            priority: 'medium',
+            responseDurationMs: 12 * 60 * 60 * 1000,
+            resolutionDurationMs: 24 * 60 * 60 * 1000,
+            responseMinutes: 480,
+            resolutionMinutes: 4320,
+          } as never),
+        },
         ticket: {
           create: vi.fn().mockResolvedValue(fakeTicket as never),
         },

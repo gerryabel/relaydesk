@@ -54,6 +54,9 @@ describe('ensureDefaultWorkspace recovery', () => {
       workspace: {
         create: vi.fn().mockResolvedValue(fakeWorkspace),
       },
+      workspaceSlaPolicy: {
+        createMany: vi.fn().mockResolvedValue({ count: 4 } as never),
+      },
       membership: {
         create: vi.fn().mockRejectedValue(
           makeUniqueMembershipError('Unique constraint failed on the fields: (`userId`)'),

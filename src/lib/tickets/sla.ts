@@ -6,32 +6,66 @@ export type SlaPolicy = {
   resolutionDurationMs: number | null;
 };
 
+export type SlaPolicyMinutes = {
+  priority: TicketPriority;
+  responseMinutes: number;
+  resolutionMinutes: number;
+};
+
 export type SlaStatus = 'pending' | 'completed' | 'overdue';
 
 export type SlaMonitoringStatus = 'on_track' | 'at_risk' | 'breached' | 'completed' | 'not_applicable';
 
-export const DEFAULT_SLA_POLICIES: Record<TicketPriority, SlaPolicy> = {
+/**
+ * Canonical application-level SLA default definition, expressed in minutes.
+ *
+ * This is the single source of truth for default SLA durations. The migration
+ * must seed existing workspaces with exactly these values. Unit conversions
+ * are centralized here — do not duplicate these formulas elsewhere.
+ */
+export const DEFAULT_SLA_POLICIES_MINUTES: Record<TicketPriority, SlaPolicyMinutes> = {
   low: {
     priority: 'low',
-    responseDurationMs: 24 * 60 * 60 * 1000,
-    resolutionDurationMs: 5 * 24 * 60 * 60 * 1000,
+    responseMinutes: 1440,
+    resolutionMinutes: 7200,
   },
   medium: {
     priority: 'medium',
-    responseDurationMs: 8 * 60 * 60 * 1000,
-    resolutionDurationMs: 3 * 24 * 60 * 60 * 1000,
+    responseMinutes: 480,
+    resolutionMinutes: 4320,
   },
   high: {
     priority: 'high',
-    responseDurationMs: 4 * 60 * 60 * 1000,
-    resolutionDurationMs: 24 * 60 * 60 * 1000,
+    responseMinutes: 240,
+    resolutionMinutes: 1440,
   },
   urgent: {
     priority: 'urgent',
-    responseDurationMs: 60 * 60 * 1000,
-    resolutionDurationMs: 4 * 60 * 60 * 1000,
+    responseMinutes: 60,
+    resolutionMinutes: 240,
   },
 };
+
+const MINUTE_IN_MS = 60 * 1000;
+
+export function minutesToMs(minutes: number): number {
+  return minutes * MINUTE_IN_MS;
+}
+
+export function slaPolicyMinutesToMs(policy: SlaPolicyMinutes): SlaPolicy {
+  return {
+    priority: policy.priority,
+    responseDurationMs: minutesToMs(policy.responseMinutes),
+    resolutionDurationMs: minutesToMs(policy.resolutionMinutes),
+  };
+}
+
+export const DEFAULT_SLA_POLICIES: Record<TicketPriority, SlaPolicy> = Object.fromEntries(
+  (Object.keys(DEFAULT_SLA_POLICIES_MINUTES) as TicketPriority[]).map((priority) => [
+    priority,
+    slaPolicyMinutesToMs(DEFAULT_SLA_POLICIES_MINUTES[priority]),
+  ]),
+) as Record<TicketPriority, SlaPolicy>;
 
 export function getSlaPolicy(priority: TicketPriority): SlaPolicy {
   const policy = DEFAULT_SLA_POLICIES[priority];
