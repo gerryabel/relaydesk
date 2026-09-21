@@ -15,6 +15,7 @@ import {
 } from '@/lib/notifications/server';
 import { createOutboxEvent } from '@/lib/outbox/outbox';
 import { queueAutomationEvaluation } from '@/lib/automation/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -126,6 +127,7 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
         workspaceId: membership.workspaceId,
         ticketId: ticket.id,
         actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
       },
       ticket.id,
     );
@@ -436,6 +438,7 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
           workspaceId: membership.workspaceId,
           ticketId: updated.id,
           actorId: membership.userId,
+          automationContext: createAutomationContext({ actorId: membership.userId }),
           triggerPayload: {
             ticketId: updated.id,
             workspaceId: membership.workspaceId,
@@ -516,6 +519,7 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
         workspaceId: membership.workspaceId,
         ticketId: updated.id,
         actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
         triggerPayload: {
           ticketId: updated.id,
           workspaceId: membership.workspaceId,
@@ -623,6 +627,7 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
         workspaceId: membership.workspaceId,
         ticketId: updated.id,
         actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
         triggerPayload: {
           ticketId: updated.id,
           workspaceId: membership.workspaceId,
@@ -688,6 +693,7 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
         workspaceId: membership.workspaceId,
         ticketId: updated.id,
         actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
         triggerPayload: {
           ticketId: updated.id,
           workspaceId: membership.workspaceId,

@@ -266,6 +266,14 @@ model InternalNote {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  /**
+   * Stable deduplication key for automation-created notes.
+   * Set only when the note originates from an automation action.
+   * Unique constraint guarantees at-most-one note per automation action
+   * even under BullMQ redelivery.
+   */
+  automationDedupeKey String? @unique
+
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   author User   @relation("InternalNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
 
@@ -311,6 +319,14 @@ model Notification {
   outboxEventId String?         @unique
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+
+  /**
+   * Stable deduplication key for automation-created notifications.
+   * Set only when the notification originates from an automation action.
+   * Unique constraint guarantees at-most-one notification per automation
+   * action even under BullMQ redelivery.
+   */
+  automationDedupeKey String? @unique
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

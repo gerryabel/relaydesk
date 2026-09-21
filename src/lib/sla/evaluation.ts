@@ -6,6 +6,7 @@ import {
 } from "@/lib/tickets/sla";
 import { createOutboxEvent } from "@/lib/outbox/outbox";
 import { queueAutomationEvaluation } from "@/lib/automation/outbox";
+import { createAutomationContext } from "@/lib/automation/context";
 import { claimBreachSlot } from "./breach";
 import type { SlaType } from "./duplicate-suppression";
 
@@ -214,6 +215,7 @@ async function evaluateSlaType(
             workspaceId: ticket.workspaceId,
             ticketId: ticket.id,
             actorId: null,
+            automationContext: createAutomationContext({ actorId: null }),
             triggerPayload: {
               ticketId: ticket.id,
               workspaceId: ticket.workspaceId,

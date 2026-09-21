@@ -67,7 +67,7 @@ describe('worker', () => {
 
     expect(result.handled).toBe(true);
     expect(prisma.outboxEvent.findUnique).toHaveBeenCalledWith({ where: { id: 'outbox-1' } });
-    expect(handler).toHaveBeenCalledWith(validEvent);
+    expect(handler).toHaveBeenCalledWith(validEvent, { attempt: 0, maxAttempts: 3 });
     expect(markOutboxEventProcessed).toHaveBeenCalledWith(prisma, 'outbox-1');
     expect(recordOutboxFailure).not.toHaveBeenCalled();
     expect(markOutboxEventPermanentlyFailed).not.toHaveBeenCalled();

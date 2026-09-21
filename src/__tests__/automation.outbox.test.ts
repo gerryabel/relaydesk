@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { queueAutomationEvaluation, queueSemanticDomainEvent } from '@/lib/automation/outbox';
 import { createOutboxEvent } from '@/lib/outbox/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
 
 vi.mock('@/lib/outbox/outbox', () => ({
   createOutboxEvent: vi.fn().mockResolvedValue(undefined),
@@ -26,6 +27,7 @@ describe('automation outbox', () => {
           workspaceId: 'workspace-1',
           ticketId: 'ticket-1',
           actorId: 'user-1',
+          automationContext: createAutomationContext({ actorId: 'user-1' }),
           triggerPayload: { priority: 'high' },
         },
         'ticket-1',
@@ -62,6 +64,7 @@ describe('automation outbox', () => {
           workspaceId: 'workspace-1',
           ticketId: 'ticket-2',
           actorId: 'user-1',
+          automationContext: createAutomationContext({ actorId: 'user-1' }),
         },
       );
 
@@ -83,6 +86,7 @@ describe('automation outbox', () => {
           workspaceId: 'workspace-1',
           ticketId: 'ticket-3',
           actorId: null,
+          automationContext: createAutomationContext({ actorId: null }),
         },
       );
 

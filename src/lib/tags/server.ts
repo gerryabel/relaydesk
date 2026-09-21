@@ -3,6 +3,7 @@ import { getCurrentMembership } from '@/lib/workspace/server';
 import { createTagSchema, updateTagSchema, type CreateTagInput, type UpdateTagInput } from '@/lib/tags/schema';
 import { TicketNotFoundError as TicketsTicketNotFoundError } from '@/lib/tickets/server';
 import { queueAutomationEvaluation } from '@/lib/automation/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
 
 export const TicketNotFoundError = TicketsTicketNotFoundError;
 
@@ -285,6 +286,7 @@ export async function addTagToTicket(ticketId: string, tagId: string) {
           workspaceId: membership.workspaceId,
           ticketId: ticket.id,
           actorId: membership.userId,
+          automationContext: createAutomationContext({ actorId: membership.userId }),
           triggerPayload: {
             ticketId: ticket.id,
             workspaceId: membership.workspaceId,
@@ -357,6 +359,7 @@ export async function removeTagFromTicket(ticketId: string, tagId: string) {
         workspaceId: membership.workspaceId,
         ticketId: ticket.id,
         actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
         triggerPayload: {
           ticketId: ticket.id,
           workspaceId: membership.workspaceId,

@@ -1,11 +1,21 @@
 import { createOutboxEvent, type CreateOutboxEventInput } from '@/lib/outbox/outbox';
 import type { Prisma } from '@/generated/prisma';
 import type { AutomationTriggerType } from './types';
+import type { AutomationContext } from './types';
 
 export interface QueueAutomationEvaluationInput {
   workspaceId: string;
   ticketId: string;
   actorId: string | null;
+  /**
+   * Automation context threaded through to the outbox event payload.
+   * The evaluator checks `automationContext.causedByAutomation` to decide
+   * whether to skip the event (recursion prevention).
+   *
+   * For normal domain mutations: causedByAutomation = false.
+   * For automation-triggered mutations: causedByAutomation = true.
+   */
+  automationContext: AutomationContext;
   triggerPayload?: Record<string, unknown>;
 }
 
@@ -18,10 +28,7 @@ export async function queueAutomationEvaluation(
   const payloadObj = {
     triggerType,
     triggerPayload: input.triggerPayload ?? {},
-    automationContext: {
-      causedByAutomation: false,
-      actorId: input.actorId,
-    },
+    automationContext: input.automationContext,
     workspaceId: input.workspaceId,
     ticketId: input.ticketId,
     actorId: input.actorId,
