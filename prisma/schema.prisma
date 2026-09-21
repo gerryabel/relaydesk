@@ -26,6 +26,7 @@ model User {
   internalNotes   InternalNote[] @relation("InternalNoteAuthor")
   activities      TicketActivity[] @relation("TicketActivityActor")
   notifications   Notification[]
+  createdAutomationRules AutomationRule[] @relation("AutomationRuleCreator")
 }
 
 model Account {
@@ -143,6 +144,8 @@ model Workspace {
   tags     Tag[]
   notifications Notification[]
   savedViews SavedView[]
+  automationRules AutomationRule[]
+  automationExecutions AutomationExecution[]
 }
 
 enum SavedViewType {
@@ -231,6 +234,7 @@ model Ticket {
   activities  TicketActivity[]
   ticketTags  TicketTag[]
   notifications Notification[]
+  automationExecutions AutomationExecution[]
 
   @@index([workspaceId])
   @@index([createdById])
@@ -261,6 +265,14 @@ model InternalNote {
   body       String
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  /**
+   * Stable deduplication key for automation-created notes.
+   * Set only when the note originates from an automation action.
+   * Unique constraint guarantees at-most-one note per automation action
+   * even under BullMQ redelivery.
+   */
+  automationDedupeKey String? @unique
 
   ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   author User   @relation("InternalNoteAuthor", fields: [authorId], references: [id], onDelete: Cascade)
@@ -307,6 +319,14 @@ model Notification {
   outboxEventId String?         @unique
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+
+  /**
+   * Stable deduplication key for automation-created notifications.
+   * Set only when the notification originates from an automation action.
+   * Unique constraint guarantees at-most-one notification per automation
+   * action even under BullMQ redelivery.
+   */
+  automationDedupeKey String? @unique
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -368,4 +388,107 @@ model Attachment {
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   @@index([messageId])
+}
+
+enum AutomationExecutionStatus {
+  pending
+  evaluating
+  awaiting_actions
+  executing
+  completed
+  partial_failure
+  failed
+  skipped
+}
+
+enum AutomationActionExecutionStatus {
+  pending
+  completed
+  failed
+  skipped
+}
+
+model AutomationRule {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  description   String?
+  enabled       Boolean  @default(true)
+  triggerType   String
+  conditions    Json     @default("[]")
+  actions       Json     @default("[]")
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("AutomationRuleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  executions AutomationExecution[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@index([workspaceId, enabled])
+}
+
+model AutomationExecution {
+  id                  String                    @id @default(cuid())
+  workspaceId         String
+  ruleId              String
+  sourceEventType     String
+  sourceEventId       String
+  sourceAggregateId   String
+  ticketId            String?
+  status              AutomationExecutionStatus
+  leasedBy            String?
+  leasedAt            DateTime?
+  evaluatedConditions Boolean                   @default(false)
+  skipReason          String?
+  error               String?
+  startedAt           DateTime                  @default(now())
+  completedAt         DateTime?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  rule      AutomationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  ticket    Ticket?         @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  actions   AutomationActionExecution[]
+
+  @@unique([sourceEventId, ruleId])
+  @@index([workspaceId, createdAt])
+  @@index([ruleId, createdAt])
+  @@index([ticketId])
+  @@index([workspaceId, status, createdAt])
+  @@index([leasedAt])
+  @@index([status, leasedBy, createdAt])
+  @@index([status, leasedAt, createdAt])
+}
+
+model AutomationActionExecution {
+  id           String                          @id @default(cuid())
+  executionId  String
+  actionIndex  Int
+  actionType   String
+  actionConfig Json
+  status       AutomationActionExecutionStatus
+  error        String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime                        @default(now())
+  updatedAt    DateTime                        @updatedAt
+
+  execution AutomationExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, actionIndex])
+  @@index([executionId, status])
+}
+
+model SentSlaBreachNotification {
+  id        String   @id @default(cuid())
+  ticketId  String
+  slaType   String
+  sentAt    DateTime @default(now())
+
+  @@unique([ticketId, slaType])
+  @@index([ticketId])
 }

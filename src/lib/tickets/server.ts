@@ -14,6 +14,8 @@ import {
   createTicketStatusChangedNotification,
 } from '@/lib/notifications/server';
 import { createOutboxEvent } from '@/lib/outbox/outbox';
+import { queueAutomationEvaluation } from '@/lib/automation/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -103,6 +105,32 @@ export async function createTicket(input: CreateTicketInput): Promise<TicketWith
         type: 'TICKET_CREATED',
       },
     });
+
+    await createOutboxEvent(
+      {
+        eventType: 'TICKET_CREATED',
+        aggregateType: 'Ticket',
+        aggregateId: ticket.id,
+        payload: {
+          workspaceId: membership.workspaceId,
+          ticketId: ticket.id,
+          actorId: membership.userId,
+        },
+      },
+      tx,
+    );
+
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.created',
+      {
+        workspaceId: membership.workspaceId,
+        ticketId: ticket.id,
+        actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
+      },
+      ticket.id,
+    );
 
     return ticket as TicketWithCreator;
   });
@@ -380,10 +408,8 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
     if (hasCustomerChange) {
       const activityType = updated.customerId === null ? 'CUSTOMER_UNLINKED' : 'CUSTOMER_LINKED';
       const activityMetadata: Record<string, string | null> =
-        updated.customerId === null
-          ? { from: existing.customerId, to: null }
-          : existing.customerId === null
-            ? { from: null, to: updated.customerId }
+        updated.customerId === null ? { from: existing.customerId, to: null }
+          : existing.customerId === null ? { from: null, to: updated.customerId }
             : { from: existing.customerId, to: updated.customerId };
 
       await tx.ticketActivity.create({
@@ -394,6 +420,38 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
           metadata: activityMetadata,
         },
       });
+    }
+
+    const triggerType = hasStatusChange
+      ? 'ticket.status_changed'
+      : hasPriorityChange
+        ? 'ticket.priority_changed'
+        : hasCustomerChange
+          ? (updated.customerId === null ? 'ticket.customer_unlinked' : 'ticket.customer_linked')
+          : null;
+
+    if (triggerType) {
+      await queueAutomationEvaluation(
+        tx,
+        triggerType,
+        {
+          workspaceId: membership.workspaceId,
+          ticketId: updated.id,
+          actorId: membership.userId,
+          automationContext: createAutomationContext({ actorId: membership.userId }),
+          triggerPayload: {
+            ticketId: updated.id,
+            workspaceId: membership.workspaceId,
+            ...(hasStatusChange ? { from: existing.status, to: parsed.status } : {}),
+            ...(hasPriorityChange ? { from: existing.priority, to: parsed.priority } : {}),
+            ...(hasCustomerChange ? {
+              from: existing.customerId,
+              to: updated.customerId,
+            } : {}),
+          },
+        },
+        updated.id,
+      );
     }
 
     return updated as TicketWithCreator;
@@ -453,6 +511,24 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
         metadata: { from: existing.status, to: 'closed' },
       },
     });
+
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.status_changed',
+      {
+        workspaceId: membership.workspaceId,
+        ticketId: updated.id,
+        actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
+        triggerPayload: {
+          ticketId: updated.id,
+          workspaceId: membership.workspaceId,
+          from: existing.status,
+          to: 'closed',
+        },
+      },
+      updated.id,
+    );
 
     return updated as TicketWithCreator;
   });
@@ -544,6 +620,24 @@ export async function assignTicket(id: string, input: AssignTicketInput): Promis
       tx,
     );
 
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.assigned',
+      {
+        workspaceId: membership.workspaceId,
+        ticketId: updated.id,
+        actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
+        triggerPayload: {
+          ticketId: updated.id,
+          workspaceId: membership.workspaceId,
+          assigneeId: updated.assignedToId ?? null,
+          previousAssigneeId: existing.assignedToId ?? null,
+        },
+      },
+      updated.id,
+    );
+
     return updated as TicketWithCreator;
   });
 }
@@ -591,6 +685,23 @@ export async function unassignTicket(id: string): Promise<TicketWithCreator> {
         metadata: { from: existing.assignedToId, to: null },
       },
     });
+
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.unassigned',
+      {
+        workspaceId: membership.workspaceId,
+        ticketId: updated.id,
+        actorId: membership.userId,
+        automationContext: createAutomationContext({ actorId: membership.userId }),
+        triggerPayload: {
+          ticketId: updated.id,
+          workspaceId: membership.workspaceId,
+          previousAssigneeId: existing.assignedToId ?? null,
+        },
+      },
+      updated.id,
+    );
 
     return updated as TicketWithCreator;
   });

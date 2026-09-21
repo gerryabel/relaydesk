@@ -53,6 +53,7 @@ describe('ticket tag services', () => {
       const txClient = {
         ticketTag: { create: vi.fn().mockResolvedValue({ ticketId: 'ticket-1', tagId: 'tag-1' } as never) },
         ticketActivity: { create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never) },
+        outboxEvent: { create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never) },
       } as never;
 
       return worker(txClient);
@@ -117,6 +118,7 @@ describe('ticket tag services', () => {
       const txClient = {
         ticketTag: { delete: vi.fn().mockResolvedValue({ ticketId: 'ticket-1', tagId: 'tag-1' } as never) },
         ticketActivity: { create: vi.fn().mockResolvedValue({ id: 'activity-1' } as never) },
+        outboxEvent: { create: vi.fn().mockResolvedValue({ id: 'outbox-1' } as never) },
       } as never;
 
       return worker(txClient);
@@ -171,6 +173,7 @@ describe('ticket tag services', () => {
       const txClient = {
         ticketTag: { create: vi.fn() },
         ticketActivity: { create: vi.fn() },
+        outboxEvent: { create: vi.fn() },
       } as never;
 
       return worker(txClient);
