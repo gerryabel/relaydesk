@@ -1,11 +1,11 @@
 # RelayDesk Phase 8 — Automation & SLA Operations
 
 **Version:** v0.6.0-alpha  
-**Status:** Draft / Planning  
+**Status:** Complete — verified on `main`  
 **Scope:** Phase 8  
 **Document:** `docs/phase-8/spec.md`
 
-> Phase 8 is a planned product milestone. It is **not** declared the final RelayDesk phase. Future phases may still be required for customer communication, self-service, integrations, or other product capabilities.
+> Phase 8 is a completed product milestone at `v0.6.0-alpha`. It is **not** the final RelayDesk phase. Future phases may still be required for customer communication, self-service, integrations, or other product capabilities.
 
 ---
 
@@ -881,7 +881,7 @@ Responsibilities:
 
 Dependency: independent from Tasks 2–3 at the data level, but implemented after Task 1 so shared authorization and worker assumptions remain stable.
 
-## Task 5 — Automation Operations & Integration Hardening
+## Task 5 — Automation Operations & Audit
 
 Responsibilities:
 
@@ -895,6 +895,8 @@ Responsibilities:
 - final independent verification
 
 Dependency: Tasks 1–4.
+
+Title aligned with §8 and the delivered scope; see `task-5.md`.
 
 ---
 
@@ -911,7 +913,7 @@ Task 4 — Configurable SLA Policies
    │
    └───────────────┐
                    ▼
-Task 5 — Operations & Integration Hardening
+Task 5 — Operations & Audit
 ```
 
 Task 4 is intentionally independent of the rule-builder implementation.
@@ -1094,18 +1096,76 @@ Those candidates MUST be evaluated as separate phases rather than silently expan
 
 # 23. Planning Status
 
-This document is the Phase 8 planning baseline.
+This document is the Phase 8 planning baseline and remains the authoritative
+statement of Phase 8 scope and requirements.
 
-No implementation task is approved merely by the existence of this specification.
+The pre-implementation planning steps below were followed for all five tasks:
+each task was reviewed against this specification, scoped, branched from the
+latest completed baseline, implemented, and independently verified before being
+merged into `main`.
 
-Before implementation:
+```text
+1. review this specification                    done
+2. confirm or amend scope                      done
+3. finalize task details                       done
+4. inspect current implementation per task      done
+5. create the task branch from the baseline    done
+6. produce the task-specific plan              done
+7. obtain approval before code changes         done
+```
 
-1. review this specification;
-2. confirm or amend scope;
-3. finalize task details;
-4. inspect current implementation against each task;
-5. create the task branch from the latest completed baseline;
-6. produce the task-specific implementation plan;
-7. obtain approval before code changes.
+## Implementation Record
 
-Phase 8 should be treated as a **candidate milestone**, not assumed to be the final RelayDesk phase.
+| Task | Commit | Status | Record |
+| --- | --- | --- | --- |
+| 1 — Automation Foundation | `31cb101`, `827c22b` | Implemented | [`task-1.md`](task-1.md) |
+| 2 — Automation Rule Management | `c4ddd65` | Implemented | [`task-2.md`](task-2.md) |
+| 3 — Automation Action Execution | `e7ce017`, merge `a9aab1e` | Implemented | [`task-3.md`](task-3.md) |
+| 4 — Configurable SLA Policies | `10ddcc8` | Implemented | [`task-4.md`](task-4.md) |
+| 5 — Automation Operations & Audit | `d0f81bb` | Implemented | [`task-5.md`](task-5.md) |
+
+`827c22b` is the post-review correction to Task 1 (recursion guard and
+zero-action lifecycle).
+
+Note: the spec's original task titles for Tasks 1, 2, and 5 were placeholders
+proposed during planning. The delivered scope, and therefore the authoritative
+task titles, are those in the per-task records linked above — notably Task 5 is
+"Automation Operations & Audit" rather than "Automation Operations &
+Integration Hardening".
+
+Phase 8 was completed and verified on `main` at milestone `v0.6.0-alpha`, with
+the caveat recorded under Deviations.
+
+## Deviations
+
+One requirement is not met by the implementation and is documented rather than
+silently accepted:
+
+* **§7.4 / §21.9 — priority-change SLA recalculation.** Changing a ticket's
+  priority records a `PRIORITY_CHANGED` activity and emits the
+  `ticket.priority_changed` trigger, but does not recalculate the persisted
+  `responseSlaDeadline` or `resolutionSlaDeadline`. The original-creation
+  deadlines remain in effect. Full analysis in
+  [`task-4.md`](task-4.md) §14.
+
+One requirement is met in substance but not in its literal wording:
+
+* **§11 — feeding the existing deadline calculation functions.** The policy
+  layer does not call the pre-existing `calculateResponseDeadline` /
+  `calculateResolutionDeadline`; `createTicket` uses new `toResponseDeadlineMs` /
+  `toResolutionDeadlineMs` converters over the policy row. The substance of the
+  requirement — no second SLA evaluator — holds, because `src/lib/sla/evaluation.ts`
+  was not modified. The side effect is that the original calculator functions now
+  have no production caller, and `src/__tests__/tickets.service.test.ts` retains
+  a vestigial mock block for them. Analysis in [`task-4.md`](task-4.md) §14.
+
+Criteria 1–6 and 11 are covered by the Task 1–3 records and were not
+re-verified during this documentation closeout. Criteria 7, 8, and 10 were
+confirmed against the Task 4 implementation. Criterion 12 is recorded in
+`README.md`, which notes that the seven `*.integration.test.ts` suites were not
+runnable during the closeout because no PostgreSQL instance was available; the
+same suite was fully green at the Task 5 commit.
+
+Phase 8 is now a **completed milestone** rather than a candidate. Deferred
+candidates listed in §22 remain unstarted and are still to be evaluated as
+separate phases rather than expanding Phase 8.
