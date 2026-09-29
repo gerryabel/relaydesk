@@ -6,9 +6,10 @@ export type OutboxEventType =
   | 'SLA_AT_RISK'
   | 'SLA_BREACHED'
   | 'AUTOMATION_EVALUATION'
-  | 'AUTOMATION_ACTION_EXECUTION';
+  | 'AUTOMATION_ACTION_EXECUTION'
+  | 'CUSTOMER_MAGIC_LINK_REQUESTED';
 
-export type OutboxAggregateType = 'Ticket';
+export type OutboxAggregateType = 'Ticket' | 'Customer';
 
 export type OutboxPayload = Record<string, unknown>;
 

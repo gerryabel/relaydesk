@@ -7,7 +7,16 @@ export function proxy(request: NextRequest) {
   const sessionRootPaths = ["/login", "/register", "/"];
   const isAuthRoot = sessionRootPaths.some((path) => url.pathname === path);
 
-  if (!isAuthRoot && !url.pathname.startsWith("/_")) {
+  // The customer portal is a separate authorization domain backed by its own
+  // session cookie. Requiring a Better Auth session here would make the
+  // customer entry point unreachable; its own route handlers authorize the
+  // request instead.
+  const customerPortalPaths = ["/portal", "/api/portal"];
+  const isCustomerPortal = customerPortalPaths.some(
+    (path) => url.pathname === path || url.pathname.startsWith(`${path}/`),
+  );
+
+  if (!isAuthRoot && !isCustomerPortal && !url.pathname.startsWith("/_")) {
     return getServerAuthSession()
       .then((session) => {
         if (!session?.user) {

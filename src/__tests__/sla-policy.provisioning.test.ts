@@ -44,7 +44,11 @@ describe('ensureDefaultWorkspace — SLA provisioning', () => {
       .spyOn(sharedPrisma, '$transaction')
       .mockImplementation(async (txFactory: (tx: never) => Promise<unknown>) => {
         const txClient = {
-          workspace: { create: workspaceCreateSpy },
+          workspace: {
+            // Slug allocation probes for an existing workspace before inserting.
+            findUnique: vi.fn().mockResolvedValue(null),
+            create: workspaceCreateSpy,
+          },
           membership: { create: membershipCreateSpy },
           workspaceSlaPolicy: { createMany: createManySpy },
         } as never;

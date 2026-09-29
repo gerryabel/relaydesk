@@ -73,7 +73,9 @@ function createId(prefix: string) {
 }
 
 async function createWorkspace(name: string) {
-  const workspace = await client.workspace.create({ data: { id: createId('ws'), name } });
+  const workspace = await client.workspace.create({
+    data: { id: createId('ws'), name, slug: createId('executions') },
+  });
   createdWorkspaceIds.push(workspace.id);
   return workspace.id;
 }

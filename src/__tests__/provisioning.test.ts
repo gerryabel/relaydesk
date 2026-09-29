@@ -50,8 +50,14 @@ describe('ensureDefaultWorkspace recovery', () => {
       updatedAt: new Date('2025-01-01T00:00:00Z'),
     } as const;
 
+    const workspaceFindUniqueSpy = vi
+      .spyOn(sharedPrisma.workspace, 'findUnique')
+      .mockResolvedValue(null as never);
+
     const txClient = {
       workspace: {
+        // Slug allocation probes for an existing workspace before inserting.
+        findUnique: workspaceFindUniqueSpy,
         create: vi.fn().mockResolvedValue(fakeWorkspace),
       },
       workspaceSlaPolicy: {

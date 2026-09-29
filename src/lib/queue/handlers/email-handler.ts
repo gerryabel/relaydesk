@@ -17,7 +17,7 @@ export async function getSentEmail(outboxEventId: string) {
   });
 }
 
-async function claimEmailSend(outboxEventId: string, recipient: string) {
+export async function claimEmailSend(outboxEventId: string, recipient: string) {
   const staleBefore = new Date(Date.now() - STALE_SEND_CLAIM_MS);
   await prisma.sentEmail.deleteMany({
     where: { outboxEventId, status: SENDING_STATUS, claimedAt: { lt: staleBefore } },
@@ -40,14 +40,14 @@ async function claimEmailSend(outboxEventId: string, recipient: string) {
   }
 }
 
-async function markEmailSent(outboxEventId: string) {
+export async function markEmailSent(outboxEventId: string) {
   await prisma.sentEmail.updateMany({
     where: { outboxEventId, status: SENDING_STATUS },
     data: { status: SENT_STATUS, sentAt: new Date() },
   });
 }
 
-async function releaseEmailClaim(outboxEventId: string) {
+export async function releaseEmailClaim(outboxEventId: string) {
   await prisma.sentEmail.deleteMany({
     where: { outboxEventId, status: SENDING_STATUS },
   });
