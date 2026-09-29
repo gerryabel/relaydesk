@@ -43,7 +43,11 @@ describe('automation retry exhaustion', () => {
   beforeEach(async () => {
     await prisma.$transaction(async (tx) => {
       const workspace = await tx.workspace.create({
-        data: { id: createId('workspace'), name: `Retry Workspace ${Date.now()}` },
+        data: {
+          id: createId('workspace'),
+          name: `Retry Workspace ${Date.now()}`,
+          slug: createId('retry'),
+        },
       });
       workspaceId = workspace.id;
       createdWorkspaceIds.push(workspaceId);

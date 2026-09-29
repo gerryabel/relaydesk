@@ -52,7 +52,11 @@ describe('outbox transactional atomicity', () => {
 
   it('commits domain mutation and outbox event together', async () => {
     const workspace = await prisma.workspace.create({
-      data: { id: createId('workspace'), name: `Atomic Workspace ${Date.now()}` },
+      data: {
+        id: createId('workspace'),
+        name: `Atomic Workspace ${Date.now()}`,
+        slug: createId('atomic'),
+      },
     });
     createdWorkspaceIds.push(workspace.id);
 
@@ -108,7 +112,11 @@ describe('outbox transactional atomicity', () => {
 
   it('rolls back domain mutation and outbox event together', async () => {
     const workspace = await prisma.workspace.create({
-      data: { id: createId('workspace'), name: `Rollback Workspace ${Date.now()}` },
+      data: {
+        id: createId('workspace'),
+        name: `Rollback Workspace ${Date.now()}`,
+        slug: createId('rollback'),
+      },
     });
     createdWorkspaceIds.push(workspace.id);
 

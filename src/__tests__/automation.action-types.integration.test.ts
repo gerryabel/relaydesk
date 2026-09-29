@@ -39,7 +39,11 @@ describe('internal-note and notification actions', () => {
     prisma = createPrismaClient();
 
     const workspace = await prisma.workspace.create({
-      data: { id: createId('workspace'), name: `Action Types ${Date.now()}` },
+      data: {
+        id: createId('workspace'),
+        name: `Action Types ${Date.now()}`,
+        slug: createId('action-types'),
+      },
     });
     workspaceId = workspace.id;
     createdWorkspaceIds.push(workspaceId);

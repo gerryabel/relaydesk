@@ -135,6 +135,9 @@ model TicketActivity {
 model Workspace {
   id        String   @id @default(cuid())
   name      String
+  /// Public, non-sensitive identifier used for customer portal routing.
+  /// Never used as an authorization credential — it is a lookup key only.
+  slug      String   @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -147,6 +150,8 @@ model Workspace {
   automationRules AutomationRule[]
   automationExecutions AutomationExecution[]
   slaPolicies WorkspaceSlaPolicy[]
+  customerMagicLinks CustomerMagicLink[]
+  customerSessions CustomerSession[]
 }
 
 model WorkspaceSlaPolicy {
@@ -218,10 +223,68 @@ model Customer {
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tickets     Ticket[]
+  customerMagicLinks CustomerMagicLink[]
+  customerSessions CustomerSession[]
 
+  // `@@index([workspaceId, email])` is retained from the original Customer
+  // migration (20260813) — dropping it is out of scope for Phase 9 and would
+  // require a separate DROP INDEX migration.
   @@index([workspaceId])
   @@index([workspaceId, email])
   @@unique([workspaceId, email])
+}
+
+/**
+ * Single-use, passwordless access token for the customer portal.
+ *
+ * Phase 9 Task 1: customers authenticate with a magic link instead of a
+ * password. Only the SHA-256 digest of the token is persisted — the raw
+ * value exists solely in the emailed link and in the async email payload.
+ *
+ * A magic link is always bound to exactly one (workspace, customer) pair and
+ * is invalid once `consumedAt` is set or `expiresAt` has passed.
+ */
+model CustomerMagicLink {
+  id          String    @id @default(cuid())
+  workspaceId String
+  customerId  String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([expiresAt])
+}
+
+/**
+ * Opaque, revocable customer portal session.
+ *
+ * Deliberately separate from the Better Auth `Session` model: a customer
+ * session must never satisfy workspace membership checks, and a workspace
+ * user session must never grant customer portal access. Sessions are
+ * workspace-scoped and are revoked by setting `revokedAt`.
+ */
+model CustomerSession {
+  id          String    @id @default(cuid())
+  workspaceId String
+  customerId  String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([expiresAt])
 }
 
 model Ticket {

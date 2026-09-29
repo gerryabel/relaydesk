@@ -24,7 +24,7 @@ describe("SLA evaluation integration", () => {
     // Create a workspace + user + membership for the integration test.
     // The test database may be empty, so we create our own test data.
     const workspace = await prisma.workspace.create({
-      data: { name: "SLA-E2E-Test-Workspace" },
+      data: { name: "SLA-E2E-Test-Workspace", slug: `sla-e2e-${Date.now()}` },
     });
 
     const userId = `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;

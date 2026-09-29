@@ -2,8 +2,12 @@ import { prisma } from '@/lib/db/prisma';
 import type { Prisma } from '@/generated/prisma';
 import { getServerAuthSession } from '@/lib/auth/session';
 import { buildDefaultSlaPolicyData } from '@/lib/workspace/sla-policy';
+import { generateWorkspaceSlug } from '@/lib/workspace/slug';
 
 const DEFAULT_WORKSPACE_NAME = 'My Workspace';
+
+/** Bounded retries for name-derived workspace slug collisions. */
+const WORKSPACE_SLUG_PROVISION_ATTEMPTS = 5;
 
 type MembershipWithWorkspace = Prisma.MembershipGetPayload<{
   include: {
@@ -120,40 +124,63 @@ export async function ensureDefaultWorkspace(userId: string): Promise<Membership
   }
 
   try {
-    return await prisma.$transaction(async (tx) => {
-      const workspace = await tx.workspace.create({
-        data: {
-          name: await computeWorkspaceName(userId),
-        },
-      });
+    for (let attempt = 0; attempt < WORKSPACE_SLUG_PROVISION_ATTEMPTS; attempt += 1) {
+      try {
+        return await provisionWorkspace(userId);
+      } catch (rawError) {
+        const error = rawError instanceof Error ? rawError : new Error(String(rawError));
 
-      await tx.workspaceSlaPolicy.createMany({
-        data: buildDefaultSlaPolicyData(workspace.id),
-      });
+        if (isUniqueMembershipError(error)) {
+          const membership = await loadMembership(userId);
 
-      return tx.membership.create({
-        data: {
-          userId,
-          workspaceId: workspace.id,
-          role: 'owner',
-        },
-        include: { workspace: true },
-      });
-    });
-  } catch (rawError) {
-    const error = rawError instanceof Error ? rawError : new Error(String(rawError));
+          if (membership) {
+            return membership;
+          }
+        }
 
-    if (isUniqueMembershipError(error)) {
-      const membership = await loadMembership(userId);
+        // Two workspaces can race to claim the same name-derived slug. The
+        // unique index rejects the loser; retry so provisioning picks the
+        // next candidate instead of failing outright.
+        if (isUniqueWorkspaceSlugError(error)) {
+          continue;
+        }
 
-      if (membership) {
-        return membership;
+        throw error;
       }
     }
 
+    throw new Error('Gagal menyiapkan workspace default.');
+  } catch (error) {
     console.error('Failed to provision default workspace', error);
     throw new Error('Gagal menyiapkan workspace default.');
   }
+}
+
+async function provisionWorkspace(userId: string): Promise<MembershipWithWorkspace> {
+  return prisma.$transaction(async (tx) => {
+    const workspaceName = await computeWorkspaceName(userId);
+    const slug = await generateWorkspaceSlug(tx, workspaceName);
+
+    const workspace = await tx.workspace.create({
+      data: {
+        name: workspaceName,
+        slug,
+      },
+    });
+
+    await tx.workspaceSlaPolicy.createMany({
+      data: buildDefaultSlaPolicyData(workspace.id),
+    });
+
+    return tx.membership.create({
+      data: {
+        userId,
+        workspaceId: workspace.id,
+        role: 'owner',
+      },
+      include: { workspace: true },
+    });
+  });
 }
 
 export async function getDefaultWorkspace(userId: string): Promise<MembershipWithWorkspace | null> {
@@ -196,4 +223,20 @@ function isUniqueMembershipError(error: Error): boolean {
     typeof known.message === 'string' && known.message.toLowerCase().includes('userid');
 
   return known.code === 'P2002' && (hasUserIdTarget || hasMembershipModel || messageMentionsUserId);
+}
+
+function isUniqueWorkspaceSlugError(error: Error): boolean {
+  const known = error as Error & {
+    code?: string;
+    meta?: { target?: string[]; modelName?: string };
+    message?: string;
+  };
+
+  const hasSlugTarget = Array.isArray(known.meta?.target) && known.meta.target.includes('slug');
+  const hasWorkspaceModel = known.meta?.modelName === 'Workspace';
+  const messageMentionsSlug =
+    typeof known.message === 'string' &&
+    (known.message.includes('Workspace_slug_key') || known.message.toLowerCase().includes('slug'));
+
+  return known.code === 'P2002' && (hasSlugTarget || hasWorkspaceModel || messageMentionsSlug);
 }

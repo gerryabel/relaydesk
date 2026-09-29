@@ -44,7 +44,11 @@ describe('automation action execution E2E', () => {
     // would violate FK constraints on subsequent creates).
     await prisma.$transaction(async (tx) => {
       const workspace = await tx.workspace.create({
-        data: { id: createId('workspace'), name: `E2E Workspace ${Date.now()}` },
+        data: {
+          id: createId('workspace'),
+          name: `E2E Workspace ${Date.now()}`,
+          slug: createId('e2e'),
+        },
       });
       workspaceId = workspace.id;
       createdWorkspaceIds.push(workspaceId);
