@@ -14,7 +14,7 @@ import {
 } from './schema';
 import { generateCustomerToken, hashCustomerToken, sealToken } from './tokens';
 import { CUSTOMER_MAGIC_LINK_TTL_MS, CUSTOMER_SESSION_TTL_MS } from './config';
-import { findOrCreateCustomerForEmail } from './provisioning';
+import { findOrCreateCustomerForEmail, lockCustomerForMagicLinkIssuance } from './provisioning';
 
 /**
  * Customer portal access service (Phase 9 Task 1).
@@ -27,7 +27,11 @@ import { findOrCreateCustomerForEmail } from './provisioning';
  *  2. Magic links and sessions are persisted as SHA-256 digests only.
  *  3. Magic-link consumption is a single conditional UPDATE, so exactly one of
  *     N concurrent verifications can win.
- *  4. The raw token is never returned to the HTTP layer by `requestMagicLink`;
+ *  4. Magic-link issuance is serialized per customer by a row lock on the
+ *     `Customer` row, so N concurrent requests for one address leave exactly
+ *     one outstanding link and consume the other N-1. The lock is held for the
+ *     whole of resolve -> lock -> sweep -> insert -> outbox.
+ *  5. The raw token is never returned to the HTTP layer by `requestMagicLink`;
  *     it is sealed into the outbox payload and opened only by the email worker.
  */
 
@@ -123,6 +127,13 @@ export async function requestCustomerMagicLink(
       parsed.email,
       seedCustomerName(parsed.email),
     );
+
+    // Serialize issuance for this customer. Everything below runs under the
+    // lock, in this same transaction, so concurrent requests cannot interleave
+    // their invalidation sweep and leave several links outstanding. See
+    // `lockCustomerForMagicLinkIssuance` for why the row lock is the right
+    // mechanism. Ordering here matters: resolve -> lock -> sweep -> insert.
+    await lockCustomerForMagicLinkIssuance(tx, customer.id, workspace.id);
 
     // Bound growth: only the newest outstanding link per customer stays valid.
     await tx.customerMagicLink.updateMany({

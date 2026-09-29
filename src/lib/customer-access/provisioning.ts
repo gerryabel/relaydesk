@@ -43,6 +43,64 @@ export interface CustomerIdentity {
 
 type ProvisioningClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'customer'>;
 
+/**
+ * Serializes magic-link issuance for one customer, by taking a row lock on the
+ * `Customer` row itself.
+ *
+ * Issuance invalidates the customer's other outstanding links before inserting
+ * the new one. That sweep is a read-then-write over several rows, so on its own
+ * it is racy under concurrent requests: each transaction's `updateMany` only
+ * observes rows committed before that statement runs, so a link inserted by a
+ * transaction that commits *after* another request's sweep is never invalidated.
+ * With 8 concurrent requests this reliably left 6-7 links outstanding instead
+ * of 1.
+ *
+ * Locking the customer row closes that window. The row always exists by this
+ * point (it was just resolved or provisioned, and on the provisioning path the
+ * winner's insert has necessarily committed), so it needs no new coordination
+ * table. Every issuance transaction takes this lock before the sweep, so the
+ * sweep and the insert are strictly serialized per customer.
+ *
+ * Notes on why the customer row rather than `pg_advisory_xact_lock`:
+ *
+ *  - It is scoped to a row that already exists and is already the natural unit
+ *    of work, so it introduces no second locking vocabulary.
+ *  - Lock order is uniform (customer row, then its links), so no deadlock cycle
+ *    can form between issuance transactions.
+ *  - It is released automatically at commit or rollback, so it cannot leak
+ *    across pooled connections.
+ *
+ * Why this is safe with the provisioning insert above: a transaction never
+ * blocks on its own uncommitted row, so the first-time request that just
+ * inserted the customer locks it immediately. Requests that lost the
+ * provisioning race see the winner's committed row and block on it until that
+ * transaction finishes.
+ *
+ * The `workspaceId` predicate is defense in depth: `id` is already unique, but
+ * re-asserting the workspace here means a caller can never hold an issuance lock
+ * on a row belonging to a different workspace.
+ *
+ * Must be called inside the same transaction as the invalidation sweep and the
+ * new-link insert; committing between the lock and the sweep would release it.
+ */
+export async function lockCustomerForMagicLinkIssuance(
+  tx: ProvisioningClient,
+  customerId: string,
+  workspaceId: string,
+): Promise<void> {
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Customer" WHERE "id" = ${customerId} AND "workspaceId" = ${workspaceId}
+    FOR UPDATE
+  `;
+
+  if (locked.length !== 1 || locked[0]!.id !== customerId) {
+    // The row was resolved moments ago in this same transaction, so its absence
+    // means the customer belongs to a different workspace. Same error the
+    // provisioning path raises, so callers already handle it.
+    throw new CustomerWorkspaceMismatchError();
+  }
+}
+
 export async function findOrCreateCustomerForEmail(
   tx: ProvisioningClient,
   workspaceId: string,
