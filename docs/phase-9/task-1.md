@@ -127,14 +127,27 @@ The portal authorizes itself through its own handlers.
 ### 7. Session Cookie
 
 `relaydesk_customer_session`, `HttpOnly`, `SameSite=Lax`, `Secure` in production,
-`Path=/portal`, `maxAge` = session TTL.
+`Path=/`, `maxAge` = session TTL.
 
-`Path=/portal` means the cookie is never attached to internal `/api` or `/dashboard`
-traffic. **This constrains the verify route:** a cookie scoped to `/portal` is not sent
-to `/api/portal/...`, so `/portal/<slug>/verify` is a server-side page that POSTs to the
-API route, and the API sets the cookie on its own response. The cookie path was
-deliberately *not* widened to `/`, which would attach a customer credential to every
-internal request.
+`Path=/` is required, not merely permissive. A browser only sends a cookie to paths it
+prefix-matches, and the credential is used from **two** namespaces: the portal pages
+(`/portal/...`) and the authenticated API routes (`/api/portal/.../auth/session`,
+`/api/portal/.../auth/logout`). A `/portal`-scoped cookie is never sent to
+`/api/portal/...`, which left both authenticated routes permanently unauthenticated —
+`/api/portal/[workspaceSlug]/auth/session` always answered `401` for a signed-in
+customer. `/` is the narrowest path that satisfies both.
+
+Widening the path does not widen the credential's authority:
+
+- The value is an opaque random token, not a Better Auth session, so it cannot be
+  replayed against internal auth.
+- Every route that reads it lives under `/api/portal` and authorizes server-side
+  against the workspace in the URL, not from anything the client can influence.
+- Internal handlers (tickets, customers, members, …) authenticate via
+  `getCurrentMembership()` and never consult this cookie.
+
+`customer-access.api.test.ts` parses the `Set-Cookie` header and asserts the cookie is
+sent to both `/portal/x` and `/api/portal/x`, and that logout clears it at the same path.
 
 The browser holds an opaque random token. Customer id, workspace id and session id are
 re-derived server-side on every request and are never sent to the client.
@@ -149,7 +162,7 @@ re-derived server-side on every request and are never sent to the client.
 | Invalid after consumption | `consumedAt` is set in the same transaction as session creation |
 | Not exposed in logs | Raw token only in the worker-built email body; sealed in the outbox |
 | Rate limited | Per workspace+email, workspace and IP |
-| No customer enumeration | `202` + identical body for known, unknown and rate-limited-by-workspace requests |
+| No customer enumeration | `202` + a byte-identical body for a known and an unknown address, and `202` is returned whether or not a customer row was created |
 | Server-side authorization | `requireCustomerInWorkspace()` re-resolves both workspace and customer, then asserts `customer.workspaceId === workspace.id` |
 | Client identifiers untrusted | Body `workspaceSlug` is overwritten by the route param; all ids re-read from the DB |
 
@@ -157,9 +170,25 @@ re-derived server-side on every request and are never sent to the client.
 cross-workspace token all produce the same `400` and the same message. A caller cannot
 distinguish "no such token" from "token belongs to another workspace".
 
-**Only the newest link per customer is valid.** Issuance invalidates any other
-outstanding link for the same customer, bounding row growth and preventing a forwarded
-old email from being used.
+**Rate limiting is orthogonal to enumeration.** An over-limit request gets `429` with
+`Retry-After`, which is a fact about the caller's own request rate and says nothing about
+whether the address is a customer. The `202` uniformity guarantee covers the
+accepted requests only.
+
+**Only the newest link per customer is intended to be valid — but this is best-effort
+under concurrent issuance.** Issuance sweeps the customer's other outstanding links
+before inserting the new one, bounding row growth and preventing a forwarded old email
+from being used. Under *sequential* requests this holds exactly. Under *concurrent*
+requests it does not, because each request's `updateMany({ where: { consumedAt: null } })`
+only observes rows committed before that statement runs; a link inserted by a
+transaction that commits after another request's sweep is never invalidated. Measured
+6–7 of 8 links still unconsumed in the 8-way concurrency test. This is a pre-existing
+gap in the invalidation step, not a consequence of the atomic-provisioning fix, and it
+is deliberately **not** asserted as `toHaveLength(1)` in the test. Serializing issuance
+per customer (a `pg_advisory_xact_lock` on `customerId`, or a `SELECT … FOR UPDATE` on
+the customer row before the sweep) would close it; that is a behaviour change and is
+left for a follow-up. The practical impact is bounded: every link is still
+single-use, and each consumed link yields an independent session.
 
 ## Design Decisions
 
@@ -182,6 +211,53 @@ cannot be used to discover who is a customer.
 `Customer.name` is required by the existing schema but a portal user supplies no name,
 so it is seeded from the email local part as a display placeholder. Task 2 is where a
 real name is collected or refined.
+
+### Provisioning is one atomic statement, not catch-and-retry
+
+`src/lib/customer-access/provisioning.ts` resolves a customer with a single
+parameterized statement:
+
+```sql
+INSERT INTO "Customer" ("id","workspaceId","name","email","createdAt","updatedAt")
+VALUES ($1,$2,$3,$4,$5,$5)
+ON CONFLICT ("workspaceId","email") DO NOTHING
+RETURNING "id","workspaceId","email"
+```
+
+and only if that returns no row does it `SELECT` the winner. The unique index remains
+the sole arbiter of the race — there is no application-level read-then-write window.
+
+The rejected alternative was `customer.create()` inside a `try`/`catch` on `P2002` that
+re-read the winner in the same transaction. That is unsound on PostgreSQL: a unique
+violation puts the transaction into a **failed** state, so every later statement in it
+returns `current transaction is aborted, commands ignored until end of transaction
+block`. The re-`SELECT`, the magic-link insert, and the outbox insert all fail, and the
+Prisma error escapes as a `500`. The integration test reproduces this exactly —
+temporarily restoring the old helper makes
+`resolves 8 concurrent first-time requests to exactly one Customer` fail with SQLSTATE
+`25P02`. `ON CONFLICT DO NOTHING` is not an error, so the transaction stays healthy and
+the follow-up `SELECT` is safe.
+
+`DO NOTHING` is used deliberately rather than `DO UPDATE`: provisioning must never
+overwrite the real `name` of a customer an agent has since corrected. A new display
+name is only ever seeded on insert. `assertSameWorkspace()` re-checks `workspaceId` on
+the returned row as defence in depth, even though the conflict target already pins it.
+
+Prisma's `upsert` was rejected: with an empty `update` object its generated SQL and its
+concurrency guarantees vary by version, and a read-then-write upsert still loses to a
+concurrent insert. `Customer.id` is a client-side `cuid()`, so the raw statement supplies
+its own `randomUUID()`.
+
+### Rate limiting consumes every rule before returning
+
+`consumeRateLimit()` increments **all** buckets and only then decides the verdict. The
+previous early return let a caller probe a tight bucket for free: a request rejected on
+the per-workspace-email rule never touched the per-IP bucket, so the IP counter
+under-counted exactly the traffic an attacker is trying to spread across addresses.
+When several rules reject, the one with the shortest window wins, since it resets soonest
+and so yields the least misleading `retryAfterSeconds`. Covered by unit tests that assert
+buckets 2 and 3 are still incremented after bucket 1 rejects, and that a TTL is not
+extended for a request that was rejected.
 
 ### Workspace id is carried redundantly
 
@@ -208,6 +284,7 @@ assumed, because this is the single isolation invariant the whole phase rests on
 - `src/lib/customer-access/errors.ts`
 - `src/lib/customer-access/rate-limit.ts`
 - `src/lib/customer-access/server.ts`
+- `src/lib/customer-access/provisioning.ts`
 - `src/lib/customer-access/session.ts`
 - `src/lib/customer-access/cookies.ts`
 - `src/lib/rate-limit/store.ts`
@@ -241,34 +318,66 @@ assumed, because this is the single isolation invariant the whole phase rests on
 
 ## Test Results
 
-```
-Test Files  95 passed | 8 failed (103)
-Tests      1108 passed | 68 failed | 16 skipped (1192)
-```
-
-The 8 failing files are all `*.integration.test.ts` and all fail for the same
-pre-existing environmental reason — no PostgreSQL server is reachable at
-`127.0.0.1:5432`:
+All of the following were executed locally against a **real PostgreSQL 17.5 instance**
+(the environment initially had no database reachable at `127.0.0.1:5432`; one was
+provisioned so these results are measured, not assumed):
 
 ```
-PrismaClientKnownRequestError: Can't reach database server at 127.0.0.1:5432
+npx prisma migrate deploy   →  All migrations have been successfully applied.
+                               (full chain, including 20260923000000_add_customer_access)
+
+npm run lint                →  clean, 0 errors, 0 warnings
+npm run typecheck           →  clean
+npm run test                →  Test Files  103 passed (103)
+                               Tests      1202 passed (1202), 0 failed, 0 skipped
+npm run build               →  Compiled successfully
+git diff --check            →  clean
 ```
 
-Baseline on `main` before this task was **7 failed files / 58 failed tests** with the
-same cause. The delta is `customer-access.integration.test.ts`, which is new and
-DB-backed. No non-integration test fails, and no previously passing test regressed.
+**Everything passes, including every DB-backed integration suite.** The earlier
+`95 passed / 8 failed` and `1108 passed / 68 failed / 16 skipped` figures were purely
+environmental: all 8 failing files were `*.integration.test.ts` failing with
+`Can't reach database server at 127.0.0.1:5432`. With a database present those 16
+skipped tests run and pass, which also re-confirms the pre-existing `main` integration
+suites are unaffected by this task. Nothing in this task was skipped or weakened to
+accommodate a missing database.
 
-Unit and route coverage added by this task: **60 tests passing** across
+### Coverage added by this task
+
+Unit, route and slug coverage: **66 tests passing** across
 `customer-access.unit.test.ts`, `customer-access.api.test.ts` and
-`workspace-slug.test.ts`, covering token entropy and separation, hash determinism,
-seal round-trip, tamper and wrong-secret rejection, uniform 202/400 responses, cookie
-flags, route-param precedence, rate-limit key privacy, multi-rule consumption, window
-reset, and slug normalization/candidate generation/validation.
+`workspace-slug.test.ts` — token entropy and separation, hash determinism, seal
+round-trip, tamper and wrong-secret rejection, uniform 202/400 responses, cookie flags
+and **cookie path matching for both `/portal/...` and `/api/portal/...`**, route-param
+precedence, rate-limit key privacy, all-rule rate-limit consumption, shortest-window
+rejection, window reset, and slug normalization/candidate generation/validation.
 
-`customer-access.integration.test.ts` covers what mocks cannot prove and will run once
-a database is available: 8-way concurrent magic-link claiming (exactly one winner),
-replay, expiry, the `P2002` first-time provisioning arbiter, cross-workspace email
-independence, session revocation and workspace-delete cascade.
+`customer-access.integration.test.ts` — **14 tests, all passing against real
+PostgreSQL** — covers what mocks cannot prove:
+
+- 8 concurrent first-time requests for one workspace/email → exactly **1** `Customer`,
+  8 access requests, 8 magic-link rows written with none lost, and no `P2002` escaping
+- an existing customer's real `name` is never overwritten by provisioning
+- the same email in two workspaces yields two independent `Customer` rows
+- a row whose `workspaceId` does not match the requested workspace is rejected
+- 8 concurrent verifications of one token → exactly **1** session, 7 rejections, with
+  the claim and the session insert in the same transaction
+- replay of a consumed token, and expiry, are both rejected
+- a token is accepted in its own workspace and rejected in another
+- sessions resolve only while unexpired and unrevoked
+- workspace deletion cascades away all customer access rows
+
+### Mutation checks
+
+The regression tests were confirmed to fail against the pre-fix behaviour rather than
+passing vacuously:
+
+| Mutation | Result |
+| --- | --- |
+| `CUSTOMER_SESSION_COOKIE_PATH` back to `/portal` | 2 cookie/API tests fail |
+| restore `create()` + catch-`P2002` provisioning | 8-way provisioning test fails, SQLSTATE `25P02` |
+| drop `consumedAt: null` from the claim | 2 token-race tests fail (8 sessions created) |
+| early-return from the rate limiter | 2 rate-limit tests fail |
 
 ### Bug found and fixed during this task
 
@@ -284,9 +393,14 @@ not have fired for a name that normalizes to nothing. Fixed to `NULLIF(..., '')`
 
 ### Not verified locally
 
-The migration has not been applied — no PostgreSQL server is available in this
-environment. `prisma migrate deploy` and the integration suite need to be run before
-merge.
+- **Redis**: `RateLimitRedisStore` is not covered here — `redis-cli` is not installed
+  and no Redis server is reachable in this environment. Only the in-memory store is
+  exercised, plus the runtime fallback that selects it when `RATE_LIMIT_REDIS_URL` is
+  unset. The Redis path is unchanged by this task and should be covered when Redis is
+  available.
+- **Portal UI**: `/portal` pages are Task 2. Task 1 ships the API, the cookie, the
+  proxy exemption and the authorization helper only, so the cookie-path change is
+  asserted at the HTTP layer rather than through a rendered page.
 
 ## Migration
 

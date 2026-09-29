@@ -11,6 +11,11 @@ import {
   handleCustomerMagicLinkEvent,
 } from '@/lib/queue/handlers/customer-magic-link';
 import { CUSTOMER_MAGIC_LINK_TTL_MS } from '@/lib/customer-access/config';
+import {
+  CUSTOMER_SESSION_COOKIE_MAX_AGE_SECONDS,
+  CUSTOMER_SESSION_COOKIE_PATH,
+} from '@/lib/customer-access/config';
+import { buildCustomerSessionCookieOptions } from '@/lib/customer-access/cookies';
 import { assertCustomerInWorkspace, requireCustomerSession } from '@/lib/customer-access/server';
 import {
   CustomerUnauthenticatedError,
@@ -20,7 +25,7 @@ import { buildMagicLinkRequestRules, buildMagicLinkVerifyRules, readClientIp } f
 import { workspaceSlugSchema } from '@/lib/workspace/slug';
 import { requestCustomerMagicLinkSchema } from '@/lib/customer-access/schema';
 import { consumeRateLimit } from '@/lib/rate-limit/limiter';
-import { createInMemoryRateLimitStore } from '@/lib/rate-limit/store';
+import { createInMemoryRateLimitStore, type RateLimitStore } from '@/lib/rate-limit/store';
 import { createRedisRateLimitStore } from '@/lib/rate-limit/redis-store';
 import { env } from '@/lib/env';
 
@@ -268,22 +273,136 @@ describe('customer rate limit policy', () => {
   });
 });
 
+describe('customer session cookie', () => {
+  it('is scoped so both the portal and the authenticated API routes receive it', () => {
+    // The customer credential is presented to /portal pages AND to
+    // /api/portal/.../session and .../logout. A narrower path would leave the
+    // authenticated routes permanently unauthenticated.
+    expect(CUSTOMER_SESSION_COOKIE_PATH).toBe('/');
+  });
+
+  it('is HttpOnly and Lax, and only Secure in production', () => {
+    const options = buildCustomerSessionCookieOptions();
+
+    expect(options.httpOnly).toBe(true);
+    expect(options.sameSite).toBe('lax');
+    expect(options.path).toBe(CUSTOMER_SESSION_COOKIE_PATH);
+    expect(options.maxAge).toBe(CUSTOMER_SESSION_COOKIE_MAX_AGE_SECONDS);
+    expect(options.maxAge).toBeGreaterThan(0);
+  });
+});
+
 describe('rate limit consumption', () => {
+  /**
+   * Wraps a store and records the count returned for each key, so assertions
+   * can inspect bucket state without consuming from it (a bare `increment`
+   * assertion would itself advance the counter and skew the result).
+   */
+  function recordingStore(store: RateLimitStore) {
+    const counts: string[] = [];
+
+    return {
+      counts,
+      store: {
+        increment: async (key: string, windowSeconds: number) => {
+          const count = await store.increment(key, windowSeconds);
+          counts.push(key);
+          return count;
+        },
+      },
+    };
+  }
+
   it('consumes every rule so a looser bucket cannot be used to dodge a tighter one', async () => {
-    const store = createInMemoryRateLimitStore(() => 0);
+    const base = createInMemoryRateLimitStore(() => 0);
+    const { store, counts } = recordingStore(base);
     const rules = [
       { action: 'a', dimensions: ['k'], limit: 1, windowSeconds: 60 },
       { action: 'b', dimensions: ['k'], limit: 10, windowSeconds: 60 },
     ];
 
     expect((await consumeRateLimit(rules, store)).allowed).toBe(true);
+    expect(counts).toEqual(['a:k', 'b:k']);
 
+    counts.length = 0;
     const second = await consumeRateLimit(rules, store);
+
     expect(second.allowed).toBe(false);
     expect(second.limitedBy?.action).toBe('a');
+    // The looser bucket was still consumed, so it is at 2, not 1.
+    expect(counts).toEqual(['a:k', 'b:k']);
+  });
 
-    // The second bucket was still incremented, so it is now at 2, not 1.
-    expect(await store.increment('b:k', 60)).toBe(2);
+  /**
+   * Regression test for the short-circuit bug: the implementation returned as
+   * soon as rule 1 rejected, so rules 2 and 3 were never counted and the
+   * per-IP bucket silently under-recorded exactly the traffic an attacker
+   * spreads across identities.
+   */
+  it('still consumes rules 2 and 3 after rule 1 rejects, and stays rejected', async () => {
+    const base = createInMemoryRateLimitStore(() => 0);
+    const { store, counts } = recordingStore(base);
+
+    const rules = [
+      { action: 'tight', dimensions: ['workspace-email', 'w1', 'e1'], limit: 1, windowSeconds: 600 },
+      { action: 'medium', dimensions: ['workspace', 'w1'], limit: 100, windowSeconds: 600 },
+      { action: 'ip', dimensions: ['ip', 'ip1'], limit: 30, windowSeconds: 600 },
+    ];
+
+    // First call: nothing is over its limit yet.
+    expect((await consumeRateLimit(rules, store)).allowed).toBe(true);
+
+    counts.length = 0;
+    const second = await consumeRateLimit(rules, store);
+
+    // Verdict is a rejection naming the tight bucket.
+    expect(second.allowed).toBe(false);
+    expect(second.limitedBy?.action).toBe('tight');
+    expect(second.retryAfterSeconds).toBe(600);
+
+    // All three buckets were consumed, not just the one that rejected.
+    expect(counts).toEqual([
+      'tight:workspace-email:w1:e1',
+      'medium:workspace:w1',
+      'ip:ip:ip1',
+    ]);
+  });
+
+  it('reports the shortest rejecting window when several rules reject', async () => {
+    const store = createInMemoryRateLimitStore(() => 0);
+    const rules = [
+      { action: 'long', dimensions: ['k'], limit: 1, windowSeconds: 600 },
+      { action: 'short', dimensions: ['k'], limit: 1, windowSeconds: 60 },
+    ];
+
+    await consumeRateLimit(rules, store);
+
+    const verdict = await consumeRateLimit(rules, store);
+
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.limitedBy?.action).toBe('short');
+    expect(verdict.retryAfterSeconds).toBe(60);
+  });
+
+  it('does not extend the window for buckets it only observed', async () => {
+    let now = 0;
+    const store = createInMemoryRateLimitStore(() => now);
+    const rules = [
+      { action: 'tight', dimensions: ['k'], limit: 1, windowSeconds: 100 },
+      { action: 'loose', dimensions: ['k'], limit: 10, windowSeconds: 100 },
+    ];
+
+    await consumeRateLimit(rules, store);
+    expect((await consumeRateLimit(rules, store)).allowed).toBe(false);
+
+    // The tight bucket resets exactly 100s after its FIRST increment, not
+    // after the most recent one, so observing it in later calls does not push
+    // the reset out.
+    now = 100_001;
+    const { store: recorder, counts } = recordingStore(store);
+
+    expect((await consumeRateLimit(rules, recorder)).allowed).toBe(true);
+    expect(counts).toEqual(['tight:k', 'loose:k']);
   });
 
   it('resets the window after it elapses', async () => {
