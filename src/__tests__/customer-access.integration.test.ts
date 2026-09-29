@@ -9,6 +9,10 @@ import {
   unsealToken,
 } from '@/lib/customer-access/tokens';
 import { findOrCreateCustomerForEmail } from '@/lib/customer-access/provisioning';
+import {
+  requestCustomerMagicLink,
+  CUSTOMER_MAGIC_LINK_REQUEST_EVENT,
+} from '@/lib/customer-access/server';
 import { CustomerMagicLinkInvalidError, CustomerWorkspaceMismatchError } from '@/lib/customer-access/errors';
 import { env } from '@/lib/env';
 
@@ -37,6 +41,7 @@ describe('customer access invariants', () => {
   let prisma: PrismaClient;
   const createdWorkspaceIds: string[] = [];
   let workspaceId: string;
+  let workspaceSlug: string;
 
   beforeAll(async () => {
     prisma = new PrismaClient({ adapter: new PrismaPg(getTestDatabaseUrl()) });
@@ -52,6 +57,7 @@ describe('customer access invariants', () => {
       data: { id: createId('ws'), name: 'Customer Access Test', slug: createId('customer-access') },
     });
     workspaceId = workspace.id;
+    workspaceSlug = workspace.slug;
     createdWorkspaceIds.push(workspace.id);
   });
 
@@ -121,75 +127,104 @@ describe('customer access invariants', () => {
     });
   });
 
-  describe('concurrent customer provisioning', () => {
-    it('resolves 8 concurrent first-time requests to exactly one Customer', async () => {
+  describe('concurrent magic-link issuance', () => {
+    it('serializes 8 concurrent requests into 1 outstanding link', async () => {
       const email = 'firsttime@example.com';
 
-      // Mirrors requestCustomerMagicLink: each request runs its own interactive
-      // transaction, provisions through findOrCreateCustomerForEmail, then
-      // invalidates any other outstanding link for that customer.
-      const request = () =>
-        prisma.$transaction(async (tx) => {
-          const customer = await findOrCreateCustomerForEmail(tx, workspaceId, email, 'firsttime');
-          const tokenHash = hashCustomerToken(generateCustomerToken());
+      // The real service, called 8x in parallel. Each call opens its own
+      // interactive transaction that resolves/provisions the customer, locks the
+      // customer row, sweeps outstanding links, inserts its link, and writes an
+      // outbox event. No request may fail, and the sweep must be serialized so
+      // exactly one link is left unconsumed.
+      const requests = Array.from({ length: CONCURRENCY }, () =>
+        requestCustomerMagicLink({ workspaceSlug, email }),
+      );
 
-          // Bound growth: only the newest outstanding link stays valid.
-          await tx.customerMagicLink.updateMany({
-            where: { customerId: customer.id, consumedAt: null },
-            data: { consumedAt: new Date() },
-          });
+      // Promise.allSettled: assert that *no* request rejected, including with a
+      // P2002 or an aborted-transaction error.
+      const settled = await Promise.allSettled(requests);
+      const rejected = settled.filter((s) => s.status === 'rejected');
 
-          await tx.customerMagicLink.create({
-            data: {
-              workspaceId,
-              customerId: customer.id,
-              tokenHash,
-              expiresAt: new Date(Date.now() + 60_000),
-            },
-          });
+      expect(rejected.map((r) => String((r as PromiseRejectedResult).reason))).toEqual([]);
+      expect(settled).toHaveLength(CONCURRENCY);
 
-          return { customerId: customer.id };
-        });
+      // Exactly one Customer for the (workspaceId, email) pair: first-time
+      // provisioning converged instead of racing.
+      const customers = await prisma.customer.findMany({ where: { workspaceId, email } });
+      expect(customers).toHaveLength(1);
+      const customerId = customers[0]!.id;
 
-      const results = await Promise.all(Array.from({ length: CONCURRENCY }, request));
-
-      // Every request succeeded; none surfaced P2002 or an aborted-transaction
-      // error.
-      expect(results).toHaveLength(CONCURRENCY);
-      expect(new Set(results.map((r) => r.customerId)).size).toBe(1);
-      expect(await prisma.customer.count({ where: { workspaceId, email } })).toBe(1);
-
-      // All 8 requests wrote a link row against that one customer. No write was
-      // lost and no request failed, which is the invariant this test exists to
-      // prove for `findOrCreateCustomerForEmail`.
+      // Every request wrote a link row; none were lost.
       const links = await prisma.customerMagicLink.findMany({ where: { workspaceId } });
       expect(links).toHaveLength(CONCURRENCY);
-      expect(new Set(links.map((l) => l.customerId)).size).toBe(1);
+      expect(new Set(links.map((l) => l.customerId))).toEqual(new Set([customerId]));
 
-      // At least one link survives (the newest request always does).
-      //
-      // NOTE: exactly-one is NOT asserted, because the "only the newest link is
-      // valid" sweep is best-effort under concurrent issuance. Each request's
-      // `updateMany({ consumedAt: null })` only observes rows committed before
-      // that statement ran, so a link inserted after another transaction's sweep
-      // is never invalidated. Observed 6-7 unconsumed out of 8 here. See the
-      // "Outstanding-link invalidation is best-effort" note in
-      // docs/phase-9/task-1.md.
-      const outstanding = links.filter((l) => l.consumedAt === null);
-      expect(outstanding.length).toBeGreaterThanOrEqual(1);
-      expect(outstanding.length).toBeLessThanOrEqual(CONCURRENCY);
-      expect(new Set(outstanding.map((l) => l.customerId)).size).toBe(1);
+      // The invariant: the row lock serializes issuance, so the last transaction
+      // to take the lock leaves the only outstanding link and consumes the rest.
+      const outstanding = await prisma.customerMagicLink.count({
+        where: { customerId, consumedAt: null },
+      });
+      expect(outstanding).toBe(1);
+      expect(links.filter((l) => l.consumedAt !== null)).toHaveLength(CONCURRENCY - 1);
+
+      // Each issuance emitted exactly one outbox event, all for this customer.
+      const events = await prisma.outboxEvent.findMany({
+        where: { aggregateType: 'Customer', aggregateId: customerId },
+      });
+      expect(events).toHaveLength(CONCURRENCY);
+      expect(new Set(events.map((e) => e.eventType))).toEqual(
+        new Set([CUSTOMER_MAGIC_LINK_REQUEST_EVENT]),
+      );
+
+      // Outbox payloads carry the sealed token, never the raw one.
+      for (const event of events) {
+        const payload = event.payload as { sealedToken?: unknown; email?: unknown };
+        expect(typeof payload.sealedToken).toBe('string');
+        expect(payload.email).toBe(email);
+      }
     });
 
+    it('keeps sequential issuance monotonic: only the last link stays valid', async () => {
+      const email = 'sequential@example.com';
+
+      // A: nothing outstanding before, A outstanding after.
+      await requestCustomerMagicLink({ workspaceSlug, email });
+
+      const customer = await prisma.customer.findFirstOrThrow({ where: { workspaceId, email } });
+      const countOutstanding = () =>
+        prisma.customerMagicLink.count({ where: { customerId: customer.id, consumedAt: null } });
+
+      expect(await countOutstanding()).toBe(1);
+
+      // B: A consumed, B outstanding.
+      await requestCustomerMagicLink({ workspaceSlug, email });
+      expect(await countOutstanding()).toBe(1);
+      expect(await prisma.customerMagicLink.count({ where: { customerId: customer.id } })).toBe(2);
+
+      // C: A/B consumed, C outstanding.
+      await requestCustomerMagicLink({ workspaceSlug, email });
+      expect(await countOutstanding()).toBe(1);
+      expect(await prisma.customerMagicLink.count({ where: { customerId: customer.id } })).toBe(3);
+      expect(
+        await prisma.customerMagicLink.count({ where: { customerId: customer.id, consumedAt: null } }),
+      ).toBe(1);
+
+      // One customer throughout, and one outbox event per request.
+      expect(await prisma.customer.count({ where: { workspaceId, email } })).toBe(1);
+      expect(
+        await prisma.outboxEvent.count({ where: { aggregateType: 'Customer', aggregateId: customer.id } }),
+      ).toBe(3);
+    });
+  });
+
+  describe('concurrent customer provisioning', () => {
     it('never overwrites an existing customer real name', async () => {
       const email = 'named@example.com';
       const existing = await seedCustomer(email, 'Budi Santoso, Distinctive Name');
 
-      const customer = await prisma.$transaction((tx) =>
-        findOrCreateCustomerForEmail(tx, workspaceId, email, 'firsttime'),
-      );
-
-      expect(customer.id).toBe(existing.id);
+      // Provisioning is a no-op for an existing row, so the seeded name is
+      // preserved even though a portal user never supplies one.
+      await requestCustomerMagicLink({ workspaceSlug, email });
 
       const after = await prisma.customer.findUniqueOrThrow({ where: { id: existing.id } });
       expect(after.name).toBe('Budi Santoso, Distinctive Name');

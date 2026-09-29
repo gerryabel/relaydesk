@@ -175,20 +175,11 @@ distinguish "no such token" from "token belongs to another workspace".
 whether the address is a customer. The `202` uniformity guarantee covers the
 accepted requests only.
 
-**Only the newest link per customer is intended to be valid — but this is best-effort
-under concurrent issuance.** Issuance sweeps the customer's other outstanding links
-before inserting the new one, bounding row growth and preventing a forwarded old email
-from being used. Under *sequential* requests this holds exactly. Under *concurrent*
-requests it does not, because each request's `updateMany({ where: { consumedAt: null } })`
-only observes rows committed before that statement runs; a link inserted by a
-transaction that commits after another request's sweep is never invalidated. Measured
-6–7 of 8 links still unconsumed in the 8-way concurrency test. This is a pre-existing
-gap in the invalidation step, not a consequence of the atomic-provisioning fix, and it
-is deliberately **not** asserted as `toHaveLength(1)` in the test. Serializing issuance
-per customer (a `pg_advisory_xact_lock` on `customerId`, or a `SELECT … FOR UPDATE` on
-the customer row before the sweep) would close it; that is a behaviour change and is
-left for a follow-up. The practical impact is bounded: every link is still
-single-use, and each consumed link yields an independent session.
+**Only the newest link per customer is valid, under both sequential and concurrent
+issuance.** Issuance sweeps the customer's other outstanding links before inserting the
+new one, bounding row growth and preventing a forwarded old email from being used. This
+holds exactly in both cases because issuance is serialized per customer — see
+*Magic-link issuance is serialized per customer* below.
 
 ## Design Decisions
 
@@ -233,8 +224,8 @@ violation puts the transaction into a **failed** state, so every later statement
 returns `current transaction is aborted, commands ignored until end of transaction
 block`. The re-`SELECT`, the magic-link insert, and the outbox insert all fail, and the
 Prisma error escapes as a `500`. The integration test reproduces this exactly —
-temporarily restoring the old helper makes
-`resolves 8 concurrent first-time requests to exactly one Customer` fail with SQLSTATE
+temporarily restoring the old helper makes the 8-way issuance test
+`serializes 8 concurrent requests into 1 outstanding link` fail with SQLSTATE
 `25P02`. `ON CONFLICT DO NOTHING` is not an error, so the transaction stays healthy and
 the follow-up `SELECT` is safe.
 
@@ -247,6 +238,70 @@ Prisma's `upsert` was rejected: with an empty `update` object its generated SQL 
 concurrency guarantees vary by version, and a read-then-write upsert still loses to a
 concurrent insert. `Customer.id` is a client-side `cuid()`, so the raw statement supplies
 its own `randomUUID()`.
+
+### Magic-link issuance is serialized per customer
+
+Issuance must leave exactly one outstanding link per customer, so that a forwarded older
+email can never be used. The sweep that enforces this —
+
+```ts
+updateMany({ where: { customerId, workspaceId, consumedAt: null },
+             data:  { consumedAt: new Date() } })
+```
+
+— is a read-then-write over several rows, so on its own it is **not** sufficient under
+concurrency. Each transaction's `updateMany` only observes rows committed *before that
+statement runs*, under `READ COMMITTED`. A link inserted by a transaction that commits
+after another request's sweep is never seen by that sweep, so it survives. With 8
+concurrent requests this reliably left **6–7 of 8** links outstanding instead of 1.
+
+`requestCustomerMagicLink` therefore takes a row lock on the `Customer` row itself,
+between customer resolution and the sweep:
+
+```sql
+SELECT "id" FROM "Customer" WHERE "id" = $1 AND "workspaceId" = $2 FOR UPDATE
+```
+
+The whole sequence runs in the single existing transaction:
+
+```text
+resolve/create Customer  →  SELECT Customer FOR UPDATE  →  sweep outstanding
+                         →  insert new link  →  insert outbox event  →  commit
+```
+
+Committing between the lock and the sweep would release it, so the ordering is
+load-bearing; the whole point is that the sweep cannot interleave with another
+issuance.
+
+Why the customer row rather than `pg_advisory_xact_lock`:
+
+- The row already exists by then (it was just resolved or provisioned), so no new
+  coordination table is needed.
+- It is scoped to the natural unit of work and reuses one locking vocabulary, which is
+  easier to reason about than a second lock namespace.
+- Lock order is uniform — customer row, then that customer's links — so no deadlock
+  cycle can form between issuance transactions.
+- The lock is released at commit or rollback, so it cannot leak across pooled
+  connections, and it is database-backed, so it holds across multiple application or
+  worker instances. An in-memory mutex or a Redis lock would not.
+
+The `workspaceId` predicate is defense in depth: `id` is already the primary key, but
+re-asserting the workspace means a caller can never hold an issuance lock on another
+workspace's row.
+
+Interaction with first-time provisioning: on the provisioning path the winner's insert
+has necessarily committed before a losing request can read the row (otherwise the loser's
+own `ON CONFLICT DO NOTHING` insert would have blocked and then succeeded), so the row is
+lockable. A transaction never blocks on its own uncommitted row, so the request that just
+inserted the customer locks it immediately. This is the same property the previous
+commit's `ON CONFLICT` fix established.
+
+The winning request is simply whichever issuance transaction acquires the lock last.
+Nothing depends on wall-clock ordering between concurrent requests.
+
+The invariant is asserted directly in the integration test
+(`expect(outstanding).toBe(1)`) and mutation-checked: deleting the lock call reproduces
+`expected 7 to be 1`.
 
 ### Rate limiting consumes every rule before returning
 
@@ -329,7 +384,7 @@ npx prisma migrate deploy   →  All migrations have been successfully applied.
 npm run lint                →  clean, 0 errors, 0 warnings
 npm run typecheck           →  clean
 npm run test                →  Test Files  103 passed (103)
-                               Tests      1202 passed (1202), 0 failed, 0 skipped
+                               Tests      1203 passed (1203), 0 failed, 0 skipped
 npm run build               →  Compiled successfully
 git diff --check            →  clean
 ```
@@ -352,11 +407,17 @@ and **cookie path matching for both `/portal/...` and `/api/portal/...`**, route
 precedence, rate-limit key privacy, all-rule rate-limit consumption, shortest-window
 rejection, window reset, and slug normalization/candidate generation/validation.
 
-`customer-access.integration.test.ts` — **14 tests, all passing against real
+`customer-access.integration.test.ts` — **15 tests, all passing against real
 PostgreSQL** — covers what mocks cannot prove:
 
-- 8 concurrent first-time requests for one workspace/email → exactly **1** `Customer`,
-  8 access requests, 8 magic-link rows written with none lost, and no `P2002` escaping
+- **8 concurrent magic-link requests** through the real `requestCustomerMagicLink()` for
+  one workspace/email → exactly **1** `Customer`, all 8 requests resolve, **8** magic-link
+  rows, **exactly 1 with `consumedAt = null`** and **7 consumed**, **8** outbox events
+  (each carrying a sealed token), and no request rejects with `P2002` or an
+  aborted-transaction error
+- **sequential issuance is monotonic** — request A leaves A outstanding; B leaves only B
+  outstanding with A consumed; C leaves only C outstanding with A and B consumed — 1
+  customer and 3 outbox events across the three requests
 - an existing customer's real `name` is never overwritten by provisioning
 - the same email in two workspaces yields two independent `Customer` rows
 - a row whose `workspaceId` does not match the requested workspace is rejected
@@ -367,6 +428,10 @@ PostgreSQL** — covers what mocks cannot prove:
 - sessions resolve only while unexpired and unrevoked
 - workspace deletion cascades away all customer access rows
 
+The two issuance cases call the real service rather than a hand-rolled mirror of it, so
+the provisioning insert, the row lock, the sweep, the link insert and the outbox insert
+are all exercised in one transaction.
+
 ### Mutation checks
 
 The regression tests were confirmed to fail against the pre-fix behaviour rather than
@@ -375,9 +440,13 @@ passing vacuously:
 | Mutation | Result |
 | --- | --- |
 | `CUSTOMER_SESSION_COOKIE_PATH` back to `/portal` | 2 cookie/API tests fail |
-| restore `create()` + catch-`P2002` provisioning | 8-way provisioning test fails, SQLSTATE `25P02` |
+| restore `create()` + catch-`P2002` provisioning | 8-way issuance test fails, SQLSTATE `25P02` |
+| **remove the `SELECT … FOR UPDATE` issuance lock** | **8-way issuance test fails: `expected 7 to be 1` outstanding** |
 | drop `consumedAt: null` from the claim | 2 token-race tests fail (8 sessions created) |
 | early-return from the rate limiter | 2 rate-limit tests fail |
+
+The lock mutation was confirmed across repeated runs (3/3 failures without the lock, 10/10
+passes with it), so the concurrency test is not timing-dependent in either direction.
 
 ### Bug found and fixed during this task
 
