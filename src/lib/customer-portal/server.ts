@@ -1,0 +1,379 @@
+import { prisma } from '@/lib/db/prisma';
+import type { Prisma } from '@/generated/prisma';
+import { requireCustomerInWorkspace } from '@/lib/customer-portal/session';
+import { CustomerTicketNotFoundError } from '@/lib/customer-portal/errors';
+import {
+  CUSTOMER_DEFAULT_TICKET_PRIORITY,
+  CUSTOMER_DEFAULT_TICKET_STATUS,
+  normalizeCustomerTicketSearch,
+  parseCreateCustomerTicketInput,
+  parseCustomerTicketListQuery,
+  type CustomerTicketListQuery,
+} from '@/lib/customer-portal/schema';
+import {
+  toCustomerMessageView,
+  toCustomerTicketDetail,
+  toCustomerTicketSummary,
+  type CustomerTicketDetail,
+  type CustomerTicketPage,
+  type CustomerTicketStatus,
+} from '@/lib/customer-portal/dto';
+import { buildLastVisibleActivityMap } from '@/lib/customer-portal/activity';
+import { normalizeTicketPagination } from '@/lib/tickets/pagination';
+import {
+  getWorkspaceSlaPolicy,
+  toResponseDeadlineMs,
+  toResolutionDeadlineMs,
+} from '@/lib/workspace/sla-policy';
+import { createOutboxEvent } from '@/lib/outbox/outbox';
+import { queueAutomationEvaluation } from '@/lib/automation/outbox';
+import { createAutomationContext } from '@/lib/automation/context';
+
+/**
+ * Customer ticket service (Phase 9 Task 2).
+ *
+ * This module deliberately does not reuse `src/lib/tickets/server.ts`. Every
+ * function there opens with `getCurrentMembership()` and is therefore
+ * unreachable for a customer — a customer session is not a Better Auth
+ * session and must never satisfy a membership check (spec §11). Keeping the
+ * customer query path separate means the two authorization domains share no
+ * call path at all.
+ *
+ * Invariants enforced by every entry point:
+ *
+ *  1. `workspaceSlug` is a lookup key only. `requireCustomerInWorkspace()`
+ *     re-resolves the workspace from the database, re-resolves the customer
+ *     from the session row, and asserts `customer.workspaceId ===
+ *     workspace.id` before any ticket is touched.
+ *  2. `workspaceId` and `customerId` always come from that resolved pair. No
+ *     function in this file accepts either as an argument.
+ *  3. Ticket reads are scoped in the `where` clause by both ids, so a
+ *     cross-customer or cross-workspace id matches zero rows. The ticket is
+ *     never fetched and authorized afterwards.
+ *  4. Only `CustomerTicketDetail` / `CustomerTicketSummary` leave this
+ *     module; Prisma rows never do.
+ */
+
+/**
+ * Column projection shared by the list, detail and create paths.
+ *
+ * Everything outside this list is unavailable to the customer by
+ * construction — there is no value to strip later if a column is added.
+ */
+const customerTicketSelect = {
+  id: true,
+  title: true,
+  description: true,
+  status: true,
+  priority: true,
+  createdAt: true,
+  resolvedAt: true,
+} satisfies Prisma.TicketSelect;
+
+type CustomerTicketRow = Prisma.TicketGetPayload<{ select: typeof customerTicketSelect }>;
+
+/** Raw query-string values. The route layer normalizes absent keys to `undefined`. */
+export type CustomerTicketListParams = Record<string, string | undefined>;
+
+export type ListCustomerTicketsInput = {
+  workspaceSlug: string;
+  params?: CustomerTicketListParams;
+};
+
+/**
+ * Lists the authenticated customer's own tickets.
+ *
+ * Scoped by `workspaceId` **and** `customerId` inside the database query — the
+ * workspace-wide ticket set is never loaded and filtered afterwards. Search
+ * matches only `title` and `description`, both customer-owned content;
+ * `createdBy`, `assignedTo` and `customer` are deliberately not searchable on
+ * a customer's behalf, and internal notes are never searched at all.
+ *
+ * Issues exactly three queries regardless of page size: one count, one
+ * paginated `findMany`, and one grouped read of the newest message timestamp.
+ * There is no per-ticket follow-up query.
+ */
+export async function listCustomerTickets(
+  input: ListCustomerTicketsInput,
+): Promise<CustomerTicketPage> {
+  const query: CustomerTicketListQuery = parseCustomerTicketListQuery(input.params ?? {});
+  const { workspace, customer } = await requireCustomerInWorkspace(input.workspaceSlug);
+
+  const where = buildOwnedTicketWhere({
+    workspaceId: workspace.id,
+    customerId: customer.customerId,
+    status: query.status,
+    search: normalizeCustomerTicketSearch(query.q),
+  });
+
+  const { page, limit } = normalizeTicketPagination({ page: query.page, limit: query.limit });
+
+  const total = await prisma.ticket.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const normalizedPage = Math.min(page, totalPages);
+
+  const tickets = await prisma.ticket.findMany({
+    where,
+    select: customerTicketSelect,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    skip: (normalizedPage - 1) * limit,
+    take: limit,
+  });
+
+  const lastActivityByTicket = await loadLastVisibleActivity(tickets);
+
+  return {
+    data: tickets.map((ticket) =>
+      toCustomerTicketSummary({
+        id: ticket.id,
+        title: ticket.title,
+        status: ticket.status,
+        priority: ticket.priority,
+        createdAt: ticket.createdAt,
+        lastActivityAt: lastActivityByTicket.get(ticket.id) ?? ticket.createdAt,
+      }),
+    ),
+    page: normalizedPage,
+    limit,
+    total,
+    totalPages,
+    hasPreviousPage: normalizedPage > 1,
+    hasNextPage: normalizedPage < totalPages,
+  };
+}
+
+export type GetCustomerTicketInput = {
+  workspaceSlug: string;
+  ticketId: string;
+};
+
+/**
+ * Reads one ticket owned by the authenticated customer.
+ *
+ * Both ownership predicates live in the query itself, so a ticket owned by
+ * another customer — or by a customer in another workspace — is
+ * indistinguishable from one that does not exist.
+ *
+ * The message read is a separate, explicit projection: only messages on an
+ * already-authorized ticket, and only the four customer-visible columns.
+ * `InternalNote`, `TicketActivity`, `AutomationExecution`, `Notification`,
+ * tags, assignment and SLA configuration are never selected, so there is
+ * nothing to discard at presentation time.
+ */
+export async function getCustomerTicket(input: GetCustomerTicketInput): Promise<CustomerTicketDetail> {
+  const { workspace, customer } = await requireCustomerInWorkspace(input.workspaceSlug);
+
+  const ticket = await prisma.ticket.findFirst({
+    where: {
+      id: input.ticketId,
+      workspaceId: workspace.id,
+      customerId: customer.customerId,
+    },
+    select: customerTicketSelect,
+  });
+
+  if (!ticket) {
+    throw new CustomerTicketNotFoundError();
+  }
+
+  const messages = await prisma.message.findMany({
+    where: { ticketId: ticket.id },
+    select: { id: true, createdById: true, body: true, createdAt: true },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+
+  const lastActivityByTicket = await loadLastVisibleActivity([ticket]);
+
+  return toCustomerTicketDetail({
+    id: ticket.id,
+    title: ticket.title,
+    description: ticket.description,
+    status: ticket.status,
+    priority: ticket.priority,
+    createdAt: ticket.createdAt,
+    resolvedAt: ticket.resolvedAt,
+    lastActivityAt: lastActivityByTicket.get(ticket.id) ?? ticket.createdAt,
+    conversation: messages.map((message) => toCustomerMessageView(message)),
+  });
+}
+
+export type CreateCustomerTicketResult = {
+  ticket: CustomerTicketDetail;
+};
+
+/**
+ * Creates a ticket on behalf of the authenticated customer.
+ *
+ * Atomic by construction: SLA policy lookup, ticket insert, ticket activity,
+ * the `TICKET_CREATED` outbox event and the `ticket.created` automation
+ * evaluation all run in one transaction. A failure in any of them — a missing
+ * SLA policy, an outbox write error — rolls the whole thing back, so a
+ * customer never sees a ticket without its deadlines, and the internal
+ * pipeline never sees a ticket whose creation event was lost.
+ *
+ * Actor semantics: a customer is not a `User`, so nothing is fabricated.
+ * `Ticket.createdById`, `Ticket.assignedToId` and `TicketActivity.actorId`
+ * stay `null`; both outbox payloads carry `actorId: null` and identify the
+ * actor through `customerId`. Automation evaluates with a null actor, which
+ * the existing `AutomationContext` type already permits, instead of the
+ * ticket being attributed to an agent who never touched it.
+ *
+ * `assignedToId: null` is set explicitly rather than omitted so a customer
+ * can never land on an agent's queue by accident, and so the trigger payload
+ * matches the persisted row.
+ */
+export async function createCustomerTicket(input: {
+  workspaceSlug: string;
+  rawInput: unknown;
+}): Promise<CreateCustomerTicketResult> {
+  const { workspace, customer } = await requireCustomerInWorkspace(input.workspaceSlug);
+  const parsed = parseCreateCustomerTicketInput(input.rawInput);
+
+  const priority = CUSTOMER_DEFAULT_TICKET_PRIORITY;
+  const now = new Date();
+
+  const ticket = await prisma.$transaction(async (tx) => {
+    const policy = await getWorkspaceSlaPolicy(tx, workspace.id, priority);
+
+    const created = await tx.ticket.create({
+      data: {
+        workspaceId: workspace.id,
+        customerId: customer.customerId,
+        createdById: null,
+        assignedToId: null,
+        title: parsed.title,
+        description: parsed.description ?? null,
+        status: CUSTOMER_DEFAULT_TICKET_STATUS,
+        priority,
+        responseSlaDeadline: new Date(now.getTime() + toResponseDeadlineMs(policy)),
+        resolutionSlaDeadline: new Date(now.getTime() + toResolutionDeadlineMs(policy)),
+      },
+      select: customerTicketSelect,
+    });
+
+    await tx.ticketActivity.create({
+      data: {
+        ticketId: created.id,
+        actorId: null,
+        type: 'TICKET_CREATED',
+      },
+    });
+
+    await createOutboxEvent(
+      {
+        eventType: 'TICKET_CREATED',
+        aggregateType: 'Ticket',
+        aggregateId: created.id,
+        payload: {
+          workspaceId: workspace.id,
+          ticketId: created.id,
+          actorId: null,
+          customerId: customer.customerId,
+        },
+      },
+      tx,
+    );
+
+    await queueAutomationEvaluation(
+      tx,
+      'ticket.created',
+      {
+        workspaceId: workspace.id,
+        ticketId: created.id,
+        actorId: null,
+        automationContext: createAutomationContext({ actorId: null }),
+        triggerPayload: {
+          ticketId: created.id,
+          workspaceId: workspace.id,
+          priority,
+          status: CUSTOMER_DEFAULT_TICKET_STATUS,
+          assignedToId: null,
+          customerId: customer.customerId,
+          createdById: null,
+        },
+      },
+      created.id,
+    );
+
+    return created;
+  });
+
+  return {
+    ticket: toCustomerTicketDetail({
+      id: ticket.id,
+      title: ticket.title,
+      description: ticket.description,
+      status: ticket.status,
+      priority: ticket.priority,
+      createdAt: ticket.createdAt,
+      resolvedAt: ticket.resolvedAt,
+      // Nothing has been said since the ticket was opened.
+      lastActivityAt: ticket.createdAt,
+      conversation: [],
+    }),
+  };
+}
+
+/**
+ * Builds the ownership predicate.
+ *
+ * `workspaceId` and `customerId` are required properties rather than
+ * optional ones, so no caller can construct a filter that omits ownership.
+ */
+function buildOwnedTicketWhere(input: {
+  workspaceId: string;
+  customerId: string;
+  status?: CustomerTicketStatus;
+  search?: string;
+}): Prisma.TicketWhereInput {
+  const where: Prisma.TicketWhereInput = {
+    workspaceId: input.workspaceId,
+    customerId: input.customerId,
+  };
+
+  if (input.status) {
+    where.status = input.status;
+  }
+
+  if (input.search) {
+    where.OR = [
+      { title: { contains: input.search, mode: 'insensitive' } },
+      { description: { contains: input.search, mode: 'insensitive' } },
+    ];
+  }
+
+  return where;
+}
+
+/**
+ * Loads the newest customer-visible activity timestamp for a set of tickets.
+ *
+ * One grouped query for the whole page, never one per ticket. A ticket with
+ * no messages resolves to its own creation time, which is the correct
+ * customer-visible answer: nothing has been said since it was opened.
+ */
+async function loadLastVisibleActivity(
+  tickets: CustomerTicketRow[],
+): Promise<Map<string, Date>> {
+  if (tickets.length === 0) {
+    return new Map();
+  }
+
+  const grouped = await prisma.message.groupBy({
+    by: ['ticketId'],
+    where: { ticketId: { in: tickets.map((ticket) => ticket.id) } },
+    _max: { createdAt: true },
+  });
+
+  const latestMessageAt = new Map<string, Date>();
+
+  for (const row of grouped) {
+    if (row._max.createdAt) {
+      latestMessageAt.set(row.ticketId, row._max.createdAt);
+    }
+  }
+
+  return buildLastVisibleActivityMap(tickets, latestMessageAt);
+}
+
+export { CustomerTicketNotFoundError };
