@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { EmptyState } from '@/components/automations/empty-state';
 import { RuleList } from '@/components/automations/rule-list';
 import { RuleBuilder } from '@/components/automations/rule-builder';
@@ -170,6 +171,15 @@ export default function AutomationsPage({ isOwner, initialRules, members, tags }
             </button>
           ) : null}
         </header>
+
+        <div>
+          <Link
+            href="/dashboard/automations/executions"
+            className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            View execution history →
+          </Link>
+        </div>
 
         {isOwner && rules.length >= 45 ? (
           <p className="text-xs text-neutral-500 dark:text-neutral-400" role="status">
