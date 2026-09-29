@@ -1,5 +1,4 @@
 import { prisma } from '@/lib/db/prisma';
-import type { Prisma } from '@/generated/prisma';
 import { env } from '@/lib/env';
 import {
   CustomerMagicLinkInvalidError,
@@ -15,6 +14,7 @@ import {
 } from './schema';
 import { generateCustomerToken, hashCustomerToken, sealToken } from './tokens';
 import { CUSTOMER_MAGIC_LINK_TTL_MS, CUSTOMER_SESSION_TTL_MS } from './config';
+import { findOrCreateCustomerForEmail } from './provisioning';
 
 /**
  * Customer portal access service (Phase 9 Task 1).
@@ -32,8 +32,6 @@ import { CUSTOMER_MAGIC_LINK_TTL_MS, CUSTOMER_SESSION_TTL_MS } from './config';
  */
 
 export const CUSTOMER_MAGIC_LINK_REQUEST_EVENT = 'CUSTOMER_MAGIC_LINK_REQUESTED';
-
-type TransactionClient = Prisma.TransactionClient;
 
 export type PublicWorkspace = {
   id: string;
@@ -86,68 +84,13 @@ export async function resolveWorkspaceBySlug(slug: string): Promise<PublicWorksp
  *    portal user never supplies a name, and Task 1 does not create tickets;
  *    Task 2 is where a real name is collected or refined.
  *
- * The `(workspaceId, email)` unique constraint is the race arbiter: concurrent
- * first-time requests both attempt the INSERT and the loser re-reads the
- * winner's row.
+ * The insert itself is delegated to `findOrCreateCustomerForEmail`, which uses
+ * `INSERT ... ON CONFLICT DO NOTHING` so concurrent first-time requests resolve
+ * to exactly one Customer without recovering from a failed statement inside
+ * this transaction. This function deliberately performs no read-then-write
+ * check of its own: the unique index is the only arbiter of the race.
  */
-async function resolveCustomerForEmail(
-  tx: TransactionClient,
-  workspaceId: string,
-  email: string,
-): Promise<{ id: string; workspaceId: string; email: string | null }> {
-  const existing = await tx.customer.findFirst({
-    where: { workspaceId, email },
-    select: { id: true, workspaceId: true, email: true },
-  });
-
-  if (existing) {
-    // Defence in depth: never trust the lookup filter alone.
-    if (existing.workspaceId !== workspaceId) {
-      throw new CustomerWorkspaceMismatchError();
-    }
-
-    return existing;
-  }
-
-  try {
-    return await tx.customer.create({
-      data: {
-        workspaceId,
-        name: emailLocalPart(email),
-        email,
-      },
-      select: { id: true, workspaceId: true, email: true },
-    });
-  } catch (error) {
-    if (!isUniqueCustomerEmailError(error)) {
-      throw error;
-    }
-
-    // A concurrent request won the insert. Re-read outside the failed
-    // statement's error path so this transaction still returns a usable row.
-    const winner = await tx.customer.findFirst({
-      where: { workspaceId, email },
-      select: { id: true, workspaceId: true, email: true },
-    });
-
-    if (!winner || winner.workspaceId !== workspaceId) {
-      throw new CustomerWorkspaceMismatchError();
-    }
-
-    return winner;
-  }
-}
-
-function isUniqueCustomerEmailError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: string }).code === 'P2002'
-  );
-}
-
-/** Seeds a display name from the address when the portal user supplies none. */
-function emailLocalPart(email: string): string {
+function seedCustomerName(email: string): string {
   const local = email.slice(0, email.indexOf('@'));
 
   return local.length > 0 ? local : email;
@@ -174,7 +117,12 @@ export async function requestCustomerMagicLink(
   const expiresAt = new Date(Date.now() + CUSTOMER_MAGIC_LINK_TTL_MS);
 
   await prisma.$transaction(async (tx) => {
-    const customer = await resolveCustomerForEmail(tx, workspace.id, parsed.email);
+    const customer = await findOrCreateCustomerForEmail(
+      tx,
+      workspace.id,
+      parsed.email,
+      seedCustomerName(parsed.email),
+    );
 
     // Bound growth: only the newest outstanding link per customer stays valid.
     await tx.customerMagicLink.updateMany({

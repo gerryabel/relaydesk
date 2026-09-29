@@ -50,10 +50,17 @@ export function buildRateLimitKey(rule: RateLimitRule): string {
 }
 
 /**
- * Consumes one unit from every rule and reports the first rejection.
+ * Consumes one unit from every rule, then reports the verdict.
  *
- * All rules are incremented even after one rejects, so an attacker cannot
- * dodge a tighter bucket by hitting a looser one first.
+ * Every rule is always consumed, even after one rejects. Returning early would
+ * let a caller probe a tighter bucket without paying for the others: a request
+ * rejected on the per-workspace-email rule would never touch the per-IP bucket,
+ * so the IP counter would under-count exactly the traffic an attacker is trying
+ * to spread out. Consuming all buckets first means the totals are always a
+ * faithful record of the requests actually made.
+ *
+ * When several rules reject, the one with the shortest window wins: it is the
+ * soonest to reset, so it produces the least misleading `retryAfterSeconds`.
  */
 export async function consumeRateLimit(
   rules: RateLimitRule[],
@@ -61,11 +68,13 @@ export async function consumeRateLimit(
 ): Promise<RateLimitVerdict> {
   const activeStore = store ?? (await getRateLimitStore());
 
+  let rejection: RateLimitVerdict | null = null;
+
   for (const rule of rules) {
     const count = await activeStore.increment(buildRateLimitKey(rule), rule.windowSeconds);
 
-    if (count > rule.limit) {
-      return {
+    if (count > rule.limit && (rejection === null || rule.windowSeconds < rejection.retryAfterSeconds)) {
+      rejection = {
         allowed: false,
         limitedBy: rule,
         retryAfterSeconds: rule.windowSeconds,
@@ -73,5 +82,5 @@ export async function consumeRateLimit(
     }
   }
 
-  return { allowed: true, limitedBy: null, retryAfterSeconds: 0 };
+  return rejection ?? { allowed: true, limitedBy: null, retryAfterSeconds: 0 };
 }

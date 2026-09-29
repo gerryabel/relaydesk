@@ -8,7 +8,7 @@ import {
   CustomerMagicLinkInvalidError,
   WorkspaceSlugNotFoundError,
 } from '@/lib/customer-access/errors';
-import { CUSTOMER_SESSION_COOKIE_NAME } from '@/lib/customer-access/config';
+import { CUSTOMER_SESSION_COOKIE_NAME, CUSTOMER_SESSION_COOKIE_PATH } from '@/lib/customer-access/config';
 import { prisma } from '@/lib/db/prisma';
 
 vi.mock('@/lib/customer-access/server', async (importOriginal) => {
@@ -88,6 +88,26 @@ function postRequest(path: string, body: unknown, headers: Record<string, string
     headers: { 'content-type': 'application/json', ...headers },
     signal: undefined,
   });
+}
+
+/**
+ * RFC 6265 §5.1.4 path matching, so cookie-scope assertions test the rule a
+ * browser actually applies rather than a restatement of the expected value.
+ */
+function browserSendsCookie(cookiePath: string, requestPath: string): boolean {
+  if (cookiePath === requestPath) {
+    return true;
+  }
+
+  if (!requestPath.startsWith(cookiePath)) {
+    return false;
+  }
+
+  if (cookiePath.endsWith('/')) {
+    return true;
+  }
+
+  return requestPath.charAt(cookiePath.length) === '/';
 }
 
 beforeEach(() => {
@@ -194,7 +214,38 @@ describe('POST /api/portal/[workspaceSlug]/auth/magic-link/verify', () => {
     expect(cookie?.value).toBe('raw-session-token');
     expect(cookie?.httpOnly).toBe(true);
     expect(cookie?.sameSite).toBe('lax');
-    expect(cookie?.path).toBe('/portal');
+  });
+
+  /**
+   * Regression test for the cookie-path blocker: the credential must be sent
+   * to BOTH namespaces the customer flow uses. RFC 6265 path matching means a
+   * `/portal` scope would silently break the authenticated API routes, so this
+   * asserts the real matching predicate rather than just string equality.
+   */
+  it('sets a cookie path that the browser sends to /portal and /api/portal', async () => {
+    consumeCustomerMagicLink.mockResolvedValue({ sessionToken: 'raw-session-token', session: sessionContext });
+
+    const response = await verifyMagicLink(
+      postRequest('/api/portal/acme-support/auth/magic-link/verify', { token: 'a'.repeat(43) }),
+      { params: Promise.resolve({ workspaceSlug: 'acme-support' }) },
+    );
+
+    const cookie = response.cookies.get(CUSTOMER_SESSION_COOKIE_NAME);
+    expect(cookie?.path).toBe('/');
+
+    const path = cookie!.path!;
+    const mustReceive = [
+      '/portal',
+      '/portal/acme-support',
+      '/portal/acme-support/verify',
+      '/api/portal/acme-support/auth/session',
+      '/api/portal/acme-support/auth/logout',
+      '/api/portal/acme-support/auth/magic-link/verify',
+    ];
+
+    for (const url of mustReceive) {
+      expect(browserSendsCookie(path, url)).toBe(true);
+    }
   });
 
   it('never returns the token in the response body', async () => {
@@ -260,6 +311,8 @@ describe('POST /api/portal/[workspaceSlug]/auth/logout', () => {
     expect(revokeCustomerSession).toHaveBeenCalledWith('raw-session-token');
     expect(response.cookies.get(CUSTOMER_SESSION_COOKIE_NAME)?.value).toBe('');
     expect(response.cookies.get(CUSTOMER_SESSION_COOKIE_NAME)?.maxAge).toBe(0);
+    // Must match the issuance path, otherwise the browser keeps the old cookie.
+    expect(response.cookies.get(CUSTOMER_SESSION_COOKIE_NAME)?.path).toBe(CUSTOMER_SESSION_COOKIE_PATH);
   });
 
   it('still clears the cookie when revocation fails', async () => {
