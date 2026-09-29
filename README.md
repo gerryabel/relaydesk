@@ -14,6 +14,7 @@ This repository currently implements:
 * **Phase 5 — Operational Helpdesk & Agent Productivity**: customer/contact management, customer ticket history and context, internal notes, tags/labels, SLA monitoring, my queue/agent queue, in-app notifications, bulk ticket actions, and message attachments. Milestone: `v0.4.0-alpha`.
 * **Phase 6 — Background Processing & Operational Hardening**: Redis/BullMQ infrastructure, transactional outbox, worker dispatch, email delivery, retry and idempotency handling, SLA background evaluation, structured worker/dispatcher logging, correlation IDs, queue and Redis diagnostics, stale outbox recovery reporting, and graceful worker shutdown. **Phase 6 is complete and independently verified on `main`.**
 * **Phase 7 — Agent Productivity & Workspace Management**: workspace member listing, detail, and role management using the existing `WorkspaceRole` model with workspace-owner authorization boundaries; workspace name configuration with server-side validation and owner authorization; personal saved ticket views (filter/sort/view state, create/edit/delete/apply) with workspace and user isolation; workspace-level agent workload overview computed from current ticket data (assigned ticket counts, status breakdown, high/urgent workload, SLA-at-risk visibility, without persisted workload counters); and operational analytics (ticket volume, status distribution, priority distribution, resolution count, average resolution time, assignment distribution, SLA risk/breach counts) with UTC `[start, end)` date semantics and owner-only agent-level assignment analytics. Milestone: `v0.5.0-alpha`. **Phase 7 is complete and independently verified on `main`.**
+* **Phase 8 — Automation & Configurable SLA**: a shared action schema and validation registry for automation side effects; workspace automation rules with server-side condition evaluation and a rule-builder dashboard page; asynchronous action execution over the existing transactional outbox and BullMQ infrastructure, with idempotency, recursion guards, and retry-with-exhaustion; owner-configurable workspace SLA policies (response/resolution minutes per ticket priority) applied to new-ticket deadline calculation while existing at-risk/breach monitoring continues to read the persisted deadline columns; and execution history, filtering, failure-state presentation, and owner-only retry. Milestone: `v0.6.0-alpha`. **Phase 8 is complete and verified on `main`.** One spec deviation is documented: priority changes record activity and emit the `ticket.priority_changed` trigger but do not recalculate persisted SLA deadlines (see `docs/phase-8/task-4.md` §14).
 
 ## Stack
 
@@ -360,7 +361,14 @@ prisma/
 docs/
 ├── phase-6/
 │   └── operations.md
-└── phase-7/
+├── phase-7/
+│   ├── spec.md
+│   ├── task-1.md
+│   ├── task-2.md
+│   ├── task-3.md
+│   ├── task-4.md
+│   └── task-5.md
+└── phase-8/
     ├── spec.md
     ├── task-1.md
     ├── task-2.md
@@ -368,6 +376,42 @@ docs/
     ├── task-4.md
     └── task-5.md
 ```
+
+## Phase 8 Documentation
+
+Detailed implementation and verification records for Phase 8 are available under `docs/phase-8/`:
+
+* [`docs/phase-8/spec.md`](docs/phase-8/spec.md) — Phase 8 feature specification, architecture expectations, and completion record.
+* [`docs/phase-8/task-1.md`](docs/phase-8/task-1.md) — Automation Foundation.
+* [`docs/phase-8/task-2.md`](docs/phase-8/task-2.md) — Automation Rule Management.
+* [`docs/phase-8/task-3.md`](docs/phase-8/task-3.md) — Automation Action Execution.
+* [`docs/phase-8/task-4.md`](docs/phase-8/task-4.md) — Configurable SLA Policies.
+* [`docs/phase-8/task-5.md`](docs/phase-8/task-5.md) — Automation Operations & Audit.
+
+The Phase 8 documentation records the scope, architecture, authorization and
+workspace-isolation boundaries, failure semantics, test coverage, and exact
+verification results for each task.
+
+### Configurable SLA Policies
+
+Owners configure response and resolution durations per ticket priority at
+`/dashboard/settings`. The `WorkspaceSlaPolicy` model stores wall-clock minutes
+with one row per priority per workspace, seeded from the canonical defaults:
+
+| Priority | Response | Resolution |
+| --- | --- | --- |
+| Low | 1440 min (24h) | 7200 min (5d) |
+| Medium | 480 min (8h) | 4320 min (3d) |
+| High | 240 min (4h) | 1440 min (1d) |
+| Urgent | 60 min (1h) | 240 min (4h) |
+
+Policy changes apply to newly created tickets; existing tickets keep the
+deadlines already persisted for them. Reads are workspace-member scoped and
+updates are workspace-owner only, enforced in the service layer. A missing
+policy row raises a configuration error instead of silently falling back to the
+hard-coded defaults. The existing SLA evaluation, at-risk, breach, and
+notification paths are unchanged — only the values they read are now
+policy-derived.
 
 ## Phase 7 Documentation
 
@@ -478,9 +522,94 @@ Both require a provisioned `DATABASE_URL_TEST` database/role and were failing on
 
 The final Phase 7 implementation was merged into `main` and pushed to `origin/main`.
 
+### Phase 8
+
+Phase 8 was verified on `main` at milestone `v0.6.0-alpha`.
+
+The final Phase 8 task (Task 5 — Automation Operations & Audit) reported a
+fully green suite with PostgreSQL available:
+
+```text
+Full Vitest suite:
+99 test files
+1122 tests passed (116 new)
+
+Task 5 focused:
+automation.executions.integration.test.ts   53 passed
+automation.executions.api.test.ts           42 passed
+automation.executions-schema.test.ts       21 passed
+
+Lint:
+0 warnings
+0 errors
+
+Typecheck:
+passed
+
+Production build:
+passed
+```
+
+The Phase 8 documentation closeout re-ran the checks with no code changes:
+
+```text
+Lint:
+0 warnings
+0 errors
+
+Typecheck:
+passed
+
+Production build:
+passed
+(1 pre-existing Turbopack NFT tracing warning)
+
+Task 4 focused:
+5 test files
+52 tests passed
+
+Vitest suite:
+92 test files passed
+1048 tests passed
+16 skipped
+7 test files not runnable (58 tests)
+```
+
+The 7 unrunnable files are all `*.integration.test.ts` suites that require a
+live PostgreSQL instance, which was not available in the closeout environment.
+Every one failed with `PrismaClientKnownRequestError: Can't reach database
+server at 127.0.0.1:5432` — an environment failure, not a code regression, and
+no production code changed between the green Task 5 run and this closeout:
+
+* `src/__tests__/automation.action-types.integration.test.ts`
+* `src/__tests__/automation.e2e.integration.test.ts`
+* `src/__tests__/automation.executions.integration.test.ts`
+* `src/__tests__/automation.recursion.integration.test.ts`
+* `src/__tests__/automation.retry-exhaustion.integration.test.ts`
+* `src/__tests__/outbox.atomicity.integration.test.ts`
+* `src/__tests__/sla.integration.test.ts`
+
+`outbox.atomicity.integration.test.ts` and `sla.integration.test.ts` are the same
+two files already documented as database-dependent during Phase 7.
+
+The production build emits a pre-existing Next/Turbopack NFT tracing warning
+originating from `next.config.ts` and surfacing in
+`src/lib/attachments/local-storage.ts` / `src/lib/attachments/service.ts`. It
+predates Phase 6 and is unrelated to Phase 8.
+
+### Known Phase 8 deviation
+
+Spec §7.4 and success criterion §21.9 require that changing a ticket's priority
+recalculate its pending SLA deadlines from the original `createdAt` without
+resetting elapsed time. The implementation records a `PRIORITY_CHANGED`
+activity and emits the `ticket.priority_changed` automation trigger, but does
+not recalculate the persisted deadlines, so a ticket keeps the deadline it was
+created with. The deviation is documented rather than silently accepted; see
+`docs/phase-8/task-4.md` §14.
+
 ## Development Notes
 
-RelayDesk is developed incrementally in phases. Each phase is independently verified before being merged into `main`. The project is currently through Phase 7.
+RelayDesk is developed incrementally in phases. Each phase is independently verified before being merged into `main`. The project is currently through Phase 8, at milestone `v0.6.0-alpha`.
 
 The project emphasizes:
 
@@ -502,7 +631,7 @@ The package version remains:
 0.1.0
 ```
 
-This is the current npm package version and is intentionally kept separate from the historical phase milestone labels such as `v0.3.0-alpha` and `v0.4.0-alpha`.
+This is the current npm package version and is intentionally kept separate from the historical phase milestone labels such as `v0.3.0-alpha`, `v0.4.0-alpha`, `v0.5.0-alpha`, and `v0.6.0-alpha`.
 
 ## License
 
