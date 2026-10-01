@@ -1,49 +1,29 @@
 import { NextResponse } from 'next/server';
-import { notFound } from 'next/navigation';
-import { prisma } from '@/lib/db/prisma';
 import { getCurrentMembership, ForbiddenError, UnauthorizedError } from '@/lib/workspace/server';
 import { createMessageSchema } from '@/lib/messages/schema';
+import { createMessage, getMessages } from '@/lib/messages/server';
+
+/**
+ * Internal (workspace) ticket conversation endpoint.
+ *
+ * Thin by design: it maps HTTP to the message service and back. Both verbs
+ * delegate to `createMessage`/`getMessages` so the authorship invariant, the
+ * `firstResponseAt` update and the customer email event are applied in one
+ * place. This route used to insert `Message` rows itself, which is exactly
+ * the bypass Task 3 removes — a direct write there could not have notified
+ * the customer.
+ *
+ * Response shapes are unchanged, including the status a missing ticket
+ * produces: it falls through to the generic 500 branch, exactly as it did when
+ * this route queried Prisma and called `notFound()` itself.
+ */
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const membership = await getCurrentMembership();
+    await getCurrentMembership();
     const resolved = await params;
 
-    const ticket = await prisma.ticket.findFirst({
-      where: { id: resolved.id, workspaceId: membership.workspaceId },
-      select: { id: true },
-    });
-
-    if (!ticket) {
-      throw notFound();
-    }
-
-    const messages = await prisma.message.findMany({
-      where: { ticketId: ticket.id },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            email: true,
-            emailVerified: true,
-            name: true,
-            image: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
-        attachments: {
-          select: {
-            id: true,
-            originalFilename: true,
-            mimeType: true,
-            sizeBytes: true,
-            createdAt: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
+    const messages = await getMessages(resolved.id);
 
     return NextResponse.json(messages);
   } catch (error) {
@@ -59,7 +39,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const membership = await getCurrentMembership();
+    await getCurrentMembership();
     const resolved = await params;
     const payload = await request.json();
     const parsed = createMessageSchema.safeParse(payload);
@@ -69,44 +49,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    const ticket = await prisma.ticket.findFirst({
-      where: { id: resolved.id, workspaceId: membership.workspaceId },
-      select: { id: true },
-    });
-
-    if (!ticket) {
-      throw notFound();
-    }
-
-    const message = await prisma.message.create({
-      data: {
-        ticketId: ticket.id,
-        body: parsed.data.body,
-        createdById: membership.userId,
-      },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            email: true,
-            emailVerified: true,
-            name: true,
-            image: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        },
-        attachments: {
-          select: {
-            id: true,
-            originalFilename: true,
-            mimeType: true,
-            sizeBytes: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
+    const message = await createMessage(resolved.id, parsed.data);
 
     return NextResponse.json(message, { status: 201 });
   } catch (error) {

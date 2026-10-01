@@ -1,5 +1,5 @@
 /**
- * Customer-visible ticket activity (Phase 9 Task 2).
+ * Customer-visible ticket activity (Phase 9 Task 2, extended in Task 3).
  *
  * The portal must not let a customer infer internal operations. Two
  * timestamp fields on `Ticket` would do exactly that if used naively:
@@ -10,61 +10,82 @@
  *    agent touched something they cannot see, which leaks the fact that
  *    internal work is happening.
  *  - `TicketActivity` is an internal audit log that records the *actor id*
- *    and, for some types, the before/after values of internal fields.
- *    Aggregating it for a customer would disclose who is working on the
- *    ticket and what they changed.
+ *    and, for most types, the before/after values of internal fields.
+ *    Aggregating it wholesale for a customer would disclose who is working on
+ *    the ticket and what they changed.
  *
- * So customer-visible activity is derived from exactly two sources:
+ * So customer-visible activity is derived from exactly three sources:
  *
- *   1. the ticket's own creation time, and
- *   2. the timestamps of its customer-visible `Message` records.
+ *   1. the ticket's own creation time,
+ *   2. the timestamps of its customer-visible `Message` records, and
+ *   3. `STATUS_CHANGED` rows in `TicketActivity`.
  *
- * That is the complete customer-visible history under the current message
- * model. Task 3 adds customer-authored messages and a `ticket.status_changed`
- * customer-visible signal; both are new *sources*, not a change to the rule,
- * so they extend `lastVisibleActivityAt` rather than replacing it.
+ * Source 3 is the one activity type a customer is allowed to know about: the
+ * status is displayed to them in the portal and emailed to them on change, so
+ * its timestamp is not a disclosure. Every *other* activity type — assignment,
+ * tagging, priority changes, internal notes, automation — stays excluded,
+ * because `TicketActivity` also records the actor id and internal before/after
+ * values. The type filter lives in the query that loads them, not in a
+ * post-filter here, so the actor column is never even fetched.
  */
 
 /**
  * Picks the customer-visible activity time for a ticket.
  *
- * The later of the ticket's creation time and the newest customer-visible
- * message. This is the complete rule, exported so that a future Task 3 change
- * has to go through this one function rather than quietly redefining
- * "last activity" somewhere else.
+ * The latest of the ticket's creation time, its newest customer-visible
+ * message and its newest customer-visible status change. Exported so that
+ * "last activity" has exactly one definition in the codebase.
  *
- * `null`/`undefined` means "no messages", which is a ticket nobody has replied
- * to — an ordinary state, not an error — so callers never have to special-case
- * it.
+ * `null`/`undefined` means "no messages"/"no status change", which is an
+ * ordinary state rather than an error, so callers never special-case it.
  */
 export function resolveLastVisibleActivity(
   createdAt: Date,
   latestMessageAt: Date | null | undefined,
+  latestStatusChangeAt?: Date | null,
 ): Date {
-  if (latestMessageAt === null || latestMessageAt === undefined) {
-    return createdAt;
+  const candidates = [createdAt, latestMessageAt, latestStatusChangeAt].filter(
+    (value): value is Date => value !== null && value !== undefined,
+  );
+
+  let latest = createdAt;
+
+  for (const candidate of candidates) {
+    // `>` rather than `>=` so a timestamp that ties the creation time still
+    // reports the creation time; the value is identical either way, and
+    // preferring the ticket's own timestamp keeps the source stable.
+    if (candidate.getTime() > latest.getTime()) {
+      latest = candidate;
+    }
   }
 
-  // `>` rather than `>=` so a message timestamp that ties the creation time
-  // still reports the creation time; the value is identical either way, and
-  // preferring the ticket's own timestamp keeps the source stable.
-  return latestMessageAt.getTime() > createdAt.getTime() ? latestMessageAt : createdAt;
+  return latest;
 }
 
 /**
- * Collapses a `groupBy` result of `MAX(Message.createdAt)` into a per-ticket
- * lookup, defaulting each ticket to its own creation time.
+ * Collapses grouped `MAX(Message.createdAt)` and `MAX(TicketActivity.createdAt)`
+ * results into a per-ticket lookup, defaulting each ticket to its own creation
+ * time.
  *
- * Missing entries mean "no messages", which is the ticket's creation time.
+ * Missing entries mean "no messages"/"no status change", which is the ticket's
+ * creation time.
  */
 export function buildLastVisibleActivityMap(
   tickets: Array<{ id: string; createdAt: Date }>,
   latestMessageByTicket: ReadonlyMap<string, Date>,
+  latestStatusChangeByTicket: ReadonlyMap<string, Date> = new Map(),
 ): Map<string, Date> {
   const result = new Map<string, Date>();
 
   for (const ticket of tickets) {
-    result.set(ticket.id, resolveLastVisibleActivity(ticket.createdAt, latestMessageByTicket.get(ticket.id)));
+    result.set(
+      ticket.id,
+      resolveLastVisibleActivity(
+        ticket.createdAt,
+        latestMessageByTicket.get(ticket.id),
+        latestStatusChangeByTicket.get(ticket.id),
+      ),
+    );
   }
 
   return result;
