@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { attachmentConfig } from '@/lib/attachments/config';
+import { formatCustomerFileSize } from '@/components/portal/customer-attachment-list';
 
 /**
  * Portal page guard and presentation layer (Phase 9 Task 2).
@@ -194,5 +196,37 @@ describe('customer date formatting', () => {
   it('degrades to the raw value rather than rendering Invalid Date', () => {
     expect(formatCustomerDate('not-a-date')).toBe('not-a-date');
     expect(formatCustomerDateOnly('')).toBe('');
+  });
+});
+
+describe('customer file sizes (Phase 9 Task 4)', () => {
+  it('formats each magnitude without a locale', () => {
+    expect(formatCustomerFileSize(0)).toBe('0 B');
+    expect(formatCustomerFileSize(512)).toBe('512 B');
+    expect(formatCustomerFileSize(2048)).toBe('2 KB');
+    expect(formatCustomerFileSize(5 * 1024 * 1024)).toBe('5.0 MB');
+    expect(formatCustomerFileSize(10 * 1024 * 1024)).toBe('10.0 MB');
+  });
+
+  it('stays locale-independent, matching how dates are rendered', () => {
+    // A size that changes shape with the reader's locale is ambiguous when a
+    // customer quotes it to support.
+    for (const bytes of [0, 1023, 1024, 1_048_576, 10_485_760]) {
+      expect(formatCustomerFileSize(bytes)).toMatch(/^[\d.]+ (B|KB|MB)$/);
+    }
+  });
+
+  it('renders nothing for a value that is not a size', () => {
+    // `sizeBytes` is an Int column, so this is unreachable from the database;
+    // the guard exists so a future projection change degrades to a blank rather
+    // than to "NaN MB" in the conversation.
+    expect(formatCustomerFileSize(Number.NaN)).toBe('');
+    expect(formatCustomerFileSize(-1)).toBe('');
+    expect(formatCustomerFileSize(Number.POSITIVE_INFINITY)).toBe('');
+  });
+
+  it('never renders a size larger than the upload limit as plausible', () => {
+    // Documents the bound: 10 MiB is the ceiling, and it formats as such.
+    expect(formatCustomerFileSize(attachmentConfig.maxFileSizeBytes)).toBe('10.0 MB');
   });
 });

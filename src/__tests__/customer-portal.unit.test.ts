@@ -9,6 +9,7 @@ import {
 } from '@/lib/customer-portal/activity';
 import {
   resolveCustomerMessageAuthor,
+  toCustomerAttachmentView,
   toCustomerMessageView,
   toCustomerTicketDetail,
   toCustomerTicketSummary,
@@ -139,6 +140,73 @@ describe('last visible activity', () => {
 
 describe('customer DTOs', () => {
   const now = new Date('2026-01-01T10:00:00Z');
+
+  describe('attachment view (Phase 9 Task 4)', () => {
+    const stored = {
+      id: 'attachment-1',
+      originalFilename: 'invoice.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 2048,
+      createdAt: now,
+    };
+
+    it('carries only the five displayable fields', () => {
+      const view = toCustomerAttachmentView(stored);
+
+      expect(Object.keys(view).sort()).toEqual([
+        'createdAt',
+        'id',
+        'mimeType',
+        'originalFilename',
+        'sizeBytes',
+      ]);
+
+      // The point of the mapper taking a narrow argument type: there is no
+      // `storageKey` to forward even if a fuller row is handed over.
+      const serialized = JSON.stringify(view);
+
+      for (const forbidden of [
+        'storageKey',
+        'messageId',
+        'workspaceId',
+        'customerId',
+        'createdById',
+      ]) {
+        expect(serialized).not.toContain(forbidden);
+      }
+    });
+
+    it('serializes the timestamp as an ISO string', () => {
+      expect(toCustomerAttachmentView(stored).createdAt).toBe('2026-01-01T10:00:00.000Z');
+    });
+
+    it.each([
+      ['../../etc/passwd', 'passwd'],
+      ['..\\..\\windows\\system32\\config', 'config'],
+      ['a\rb.txt', 'ab.txt'],
+      ['invoice\u202Etxt.exe', 'invoicetxt.exe'],
+      ['..', 'attachment'],
+      ['', 'attachment'],
+    ])('re-sanitizes the legacy stored filename %j', (storedName, expected) => {
+      // Rows written through the internal route before Task 4 hold whatever an
+      // agent's browser sent. The ticket projection reads those rows, so the
+      // conversation view has to be safe on its own — independent of the
+      // download route's own sanitization.
+      expect(
+        toCustomerAttachmentView({ ...stored, originalFilename: storedName }).originalFilename,
+      ).toBe(expected);
+    });
+
+    it('normalizes a stored type carrying parameters', () => {
+      expect(
+        toCustomerAttachmentView({ ...stored, mimeType: 'TEXT/PLAIN; charset=utf-8' }).mimeType,
+      ).toBe('text/plain');
+    });
+
+    it('leaves an already-clean filename untouched', () => {
+      expect(toCustomerAttachmentView(stored).originalFilename).toBe('invoice.pdf');
+    });
+  });
 
   it('summary carries no internal fields', () => {
     const summary = toCustomerTicketSummary({

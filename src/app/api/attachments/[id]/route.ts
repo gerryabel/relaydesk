@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { attachmentService, AttachmentNotFoundError, StorageError } from '@/lib/attachments/service';
 import { UnauthorizedError, ForbiddenError } from '@/lib/workspace/server';
+import { buildAttachmentContentDisposition } from '@/lib/attachments/filename';
 
 export async function GET(
   _request: Request,
@@ -14,7 +15,14 @@ export async function GET(
       status: 200,
       headers: {
         'Content-Type': result.mimeType,
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(result.originalFilename)}"`,
+        // Sanitized filename plus the RFC 5987 `filename*` form. The previous
+        // `filename="${encodeURIComponent(...)}"` interpolated the stored name
+        // into a header: `encodeURIComponent` happens to escape `"` and CR/LF,
+        // but the result is a percent-encoded name that many clients save
+        // verbatim, and a `'` or a `\` survived it. Task 4 shares one builder
+        // with the customer route so both paths are covered by the same tests.
+        'Content-Disposition': buildAttachmentContentDisposition(result.originalFilename),
+        'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-cache',
       },
     });

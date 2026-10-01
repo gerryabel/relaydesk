@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { uploadAttachmentSchema } from './schema';
 import { attachmentConfig } from './config';
 import { getStorageProvider } from './local-storage';
+import { sanitizeAttachmentFilename } from './filename';
 import type { StorageProvider } from './storage.interface';
 import type { UploadAttachmentInput } from './schema';
 import { TicketActivityType } from '@/generated/prisma';
@@ -90,6 +91,12 @@ export class AttachmentService {
 
     const membership = await getCurrentMembership();
 
+    // Normalized once, here, so `originalFilename` is a safe value everywhere
+    // downstream (portal DTOs, `Content-Disposition`, activity metadata) rather
+    // than in each reader. Task 4 introduced the helper; the internal path is
+    // the other writer of this column, so it uses it too.
+    const safeFilename = sanitizeAttachmentFilename(parsed.filename);
+
     const message = await prisma.message.findFirst({
       where: { id: messageId },
       include: {
@@ -120,7 +127,7 @@ export class AttachmentService {
         const created = await tx.attachment.create({
           data: {
             messageId,
-            originalFilename: parsed.filename,
+            originalFilename: safeFilename,
             mimeType: parsed.mimeType,
             sizeBytes: parsed.sizeBytes,
             storageKey,
@@ -140,7 +147,7 @@ export class AttachmentService {
             ticketId: message.ticketId,
             actorId: membership.userId,
             type: TicketActivityType.ATTACHMENT_ADDED,
-            metadata: { attachmentId: created.id, filename: parsed.filename },
+            metadata: { attachmentId: created.id, filename: safeFilename },
           },
         });
 
