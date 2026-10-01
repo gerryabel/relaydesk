@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import { CustomerReplyForm } from '@/components/portal/customer-reply-form';
 import {
   customerPriorityLabel,
   customerStatusLabel,
@@ -8,19 +9,27 @@ import {
 import type { CustomerTicketDetail } from '@/lib/customer-portal/dto';
 
 /**
- * Customer ticket detail (Phase 9 Task 2).
+ * Customer ticket detail (Phase 9 Task 2; replies in Task 3).
  *
  * Renders exactly what `CustomerTicketDetail` carries: identity, status,
- * priority, the customer's own description, and the customer-visible
- * conversation. There is no internal-notes section, no activity timeline, no
- * SLA panel, no assignment control and no reply form — Task 3 adds replies
- * and drives the form from `availableActions`, which is empty here.
+ * priority, the customer's own description, the customer-visible conversation
+ * and the actions the service says are available. There is no internal-notes
+ * section, no activity timeline, no SLA panel and no assignment control.
+ *
+ * The reply box is rendered from `availableActions.includes('reply')` rather
+ * than from a status check in this file: the list comes from the same
+ * `resolveCustomerTicketActions` the write path enforces, so the portal cannot
+ * offer a reply that would be refused — or hide one that would be accepted.
  */
 export function CustomerTicketDetailView({
   ticket,
+  workspaceSlug,
 }: {
   ticket: CustomerTicketDetail;
+  workspaceSlug: string;
 }) {
+  const canReply = ticket.availableActions.includes('reply');
+
   return (
     <article className="flex flex-col gap-6">
       <header className="flex flex-col gap-3">
@@ -88,12 +97,22 @@ export function CustomerTicketDetailView({
 
         {ticket.conversation.length === 0 ? (
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            No replies yet. Our support team will respond here and you will be notified by email.
+            {canReply
+              ? 'No replies yet. Add a message below and our support team will respond here.'
+              : 'No replies on this ticket.'}
           </p>
         ) : (
           <ol className="mt-3 flex flex-col gap-4">
             {ticket.conversation.map((message) => (
-              <li key={message.reference} className="flex flex-col gap-1 border-l-2 border-neutral-200 pl-3 dark:border-neutral-700">
+              <li
+                key={message.reference}
+                className={[
+                  'flex flex-col gap-1 border-l-2 pl-3',
+                  message.author === 'customer'
+                    ? 'border-neutral-900 dark:border-neutral-100'
+                    : 'border-neutral-200 dark:border-neutral-700',
+                ].join(' ')}
+              >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
                   <span className="font-medium text-neutral-900 dark:text-neutral-50">
                     {message.authorLabel}
@@ -108,6 +127,28 @@ export function CustomerTicketDetailView({
           </ol>
         )}
       </section>
+
+      {canReply ? (
+        <section
+          aria-labelledby="portal-reply-heading"
+          className="rounded-lg border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900"
+        >
+          <h2
+            id="portal-reply-heading"
+            className="text-sm font-medium text-neutral-900 dark:text-neutral-50"
+          >
+            Reply
+          </h2>
+          <div className="mt-3">
+            <CustomerReplyForm workspaceSlug={workspaceSlug} ticketId={ticket.id} />
+          </div>
+        </section>
+      ) : (
+        <p className="text-sm text-neutral-600 dark:text-neutral-300">
+          This ticket is closed, so replies are no longer accepted. Start a new ticket if you
+          need more help.
+        </p>
+      )}
     </article>
   );
 }

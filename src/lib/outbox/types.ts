@@ -2,6 +2,7 @@ export type OutboxEventType =
   | 'TICKET_CREATED'
   | 'TICKET_ASSIGNED'
   | 'TICKET_REPLIED'
+  | 'TICKET_STATUS_CHANGED'
   | 'TICKET_RESOLVED'
   | 'SLA_AT_RISK'
   | 'SLA_BREACHED'

@@ -4,15 +4,16 @@ import type { TicketPriority } from '@/lib/tickets/sla';
 import { CustomerTicketValidationError } from './errors';
 
 /**
- * Customer portal ticket input validation (Phase 9 Task 2).
+ * Customer portal ticket input validation (Phase 9 Task 2; customer reply
+ * added in Task 3).
  *
  * Two properties matter more than anything else here:
  *
- *  1. The create payload is **strict**. A customer controls exactly two
- *     fields. `customerId`, `workspaceId`, `priority`, `status`,
- *     `assignedToId` and any other key is rejected outright rather than
- *     silently dropped, so a caller can never believe it influenced
- *     ownership or workflow state.
+ *  1. Every payload is **strict**. A customer controls exactly the fields
+ *     listed and nothing else. `customerId`, `workspaceId`, `priority`,
+ *     `status`, `assignedToId` and any other key is rejected outright rather
+ *     than silently dropped, so a caller can never believe it influenced
+ *     ownership, authorship or workflow state.
  *  2. Validation is server-side and authoritative. Nothing derived from it
  *     substitutes for authorization.
  */
@@ -72,6 +73,32 @@ export const createCustomerTicketSchema = z.strictObject({
   description: descriptionSchema.nullish().default(null),
 });
 
+/** Longest customer reply body. Matches the agent-side message limit. */
+export const CUSTOMER_REPLY_BODY_MAX_LENGTH = 5000;
+
+/**
+ * The complete set of customer-controlled reply fields: exactly one.
+ *
+ * `strictObject` is what makes "a customer cannot change ticket status, cannot
+ * claim authorship of someone else's message and cannot set `firstResponseAt`"
+ * true rather than aspirational — each of those keys is a validation error, not
+ * a dropped field.
+ *
+ * `ticketId` is **not** part of this object. It arrives as a route parameter
+ * and is scoped by ownership in the query, so it is never a value a request
+ * body can contradict.
+ */
+export const createCustomerReplySchema = z.strictObject({
+  body: z
+    .string({ error: 'Message must be text' })
+    .trim()
+    .min(1, 'Message cannot be empty')
+    .max(
+      CUSTOMER_REPLY_BODY_MAX_LENGTH,
+      `Message cannot exceed ${CUSTOMER_REPLY_BODY_MAX_LENGTH} characters`,
+    ),
+});
+
 /** Query parameters for the customer ticket list. */
 export const customerTicketListQuerySchema = z.strictObject({
   q: z
@@ -86,6 +113,7 @@ export const customerTicketListQuerySchema = z.strictObject({
 });
 
 export type CreateCustomerTicketInput = z.infer<typeof createCustomerTicketSchema>;
+export type CreateCustomerReplyInput = z.infer<typeof createCustomerReplySchema>;
 export type CustomerTicketListQuery = z.infer<typeof customerTicketListQuerySchema>;
 
 /**
@@ -109,6 +137,17 @@ export function parseCreateCustomerTicketInput(rawInput: unknown): CreateCustome
 /** Same contract as {@link parseCreateCustomerTicketInput}, for list queries. */
 export function parseCustomerTicketListQuery(rawInput: unknown): CustomerTicketListQuery {
   const parsed = customerTicketListQuerySchema.safeParse(rawInput ?? {});
+
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  throw toCustomerTicketValidationError(parsed.error);
+}
+
+/** Same contract as {@link parseCreateCustomerTicketInput}, for customer replies. */
+export function parseCreateCustomerReplyInput(rawInput: unknown): CreateCustomerReplyInput {
+  const parsed = createCustomerReplySchema.safeParse(rawInput ?? {});
 
   if (parsed.success) {
     return parsed.data;

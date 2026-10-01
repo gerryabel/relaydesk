@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  createCustomerReply,
   createCustomerTicket,
   getCustomerTicket,
   listCustomerTickets,
@@ -8,11 +9,11 @@ import { requireCustomerInWorkspace } from '@/lib/customer-portal/session';
 import { getWorkspaceSlaPolicy } from '@/lib/workspace/sla-policy';
 import { createOutboxEvent } from '@/lib/outbox/outbox';
 import { queueAutomationEvaluation } from '@/lib/automation/outbox';
-import { CustomerTicketNotFoundError } from '@/lib/customer-portal/errors';
+import { CustomerTicketNotFoundError, CustomerTicketReplyNotAllowedError } from '@/lib/customer-portal/errors';
 import { CustomerUnauthenticatedError } from '@/lib/customer-access/errors';
 
 /**
- * Customer ticket service behavior (Phase 9 Task 2).
+ * Customer ticket service behavior (Phase 9 Task 2; customer reply in Task 3).
  *
  * The database is mocked so the *query shape* can be asserted directly, which
  * is the property that matters and the one mocks can prove: that a ticket read
@@ -32,7 +33,9 @@ const prismaMocks = vi.hoisted(() => ({
   ticketFindMany: vi.fn(),
   ticketCount: vi.fn(),
   messageFindMany: vi.fn(),
+  messageCreate: vi.fn(),
   messageGroupBy: vi.fn(),
+  ticketActivityGroupBy: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -45,7 +48,11 @@ vi.mock('@/lib/db/prisma', () => ({
     },
     message: {
       findMany: prismaMocks.messageFindMany,
+      create: prismaMocks.messageCreate,
       groupBy: prismaMocks.messageGroupBy,
+    },
+    ticketActivity: {
+      groupBy: prismaMocks.ticketActivityGroupBy,
     },
     $transaction: prismaMocks.transaction,
   },
@@ -106,6 +113,7 @@ beforeEach(() => {
   prismaMocks.ticketFindFirst.mockResolvedValue(null);
   prismaMocks.messageFindMany.mockResolvedValue([]);
   prismaMocks.messageGroupBy.mockResolvedValue([]);
+  prismaMocks.ticketActivityGroupBy.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -178,7 +186,7 @@ describe('listCustomerTickets', () => {
     ]);
   });
 
-  it('issues exactly three queries regardless of page size', async () => {
+  it('issues a fixed number of queries regardless of page size', async () => {
     prismaMocks.ticketCount.mockResolvedValue(120);
     prismaMocks.ticketFindMany.mockResolvedValue(
       Array.from({ length: 20 }, (_, index) => ticketRow({ id: `ticket-${index}` })) as never,
@@ -186,11 +194,13 @@ describe('listCustomerTickets', () => {
 
     const page = await listCustomerTickets({ workspaceSlug: workspace.slug, params: { limit: '20' } });
 
-    // count + findMany + one grouped max(createdAt). A per-ticket lookup for
-    // the newest message would be N+1 and would leak row counts by latency.
+    // count + findMany + two grouped max(createdAt) reads (messages and
+    // status changes). A per-ticket lookup would be N+1 and would leak row
+    // counts by latency.
     expect(prismaMocks.ticketCount).toHaveBeenCalledTimes(1);
     expect(prismaMocks.ticketFindMany).toHaveBeenCalledTimes(1);
     expect(prismaMocks.messageGroupBy).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.ticketActivityGroupBy).toHaveBeenCalledTimes(1);
     expect(page.total).toBe(120);
     expect(page.totalPages).toBe(6);
   });
@@ -209,13 +219,28 @@ describe('listCustomerTickets', () => {
     // to the page that is actually being rendered.
     expect(args?.by).toEqual(['ticketId']);
     expect(args?.where).toMatchObject({ ticketId: { in: ['a', 'b'] } });
-    expect(Object.keys((args?.by as Record<string, unknown>) ?? {})).not.toContain('_count');
   });
 
-  it('skips the grouped read entirely when the page is empty', async () => {
+  it('reads only STATUS_CHANGED activity, never the internal audit trail', async () => {
+    prismaMocks.ticketFindMany.mockResolvedValue([ticketRow({ id: 'a' })] as never);
+
+    await listCustomerTickets({ workspaceSlug: workspace.slug });
+
+    const args = prismaMocks.ticketActivityGroupBy.mock.calls[0]?.[0];
+
+    expect(args?.by).toEqual(['ticketId']);
+    // The type filter is in the query, so an assignee id or an internal
+    // before/after value is never fetched, let alone serialized.
+    expect(args?.where).toMatchObject({ ticketId: { in: ['a'] }, type: 'STATUS_CHANGED' });
+    expect(JSON.stringify(args)).not.toContain('actorId');
+    expect(JSON.stringify(args)).not.toContain('metadata');
+  });
+
+  it('skips the grouped reads entirely when the page is empty', async () => {
     await listCustomerTickets({ workspaceSlug: workspace.slug });
 
     expect(prismaMocks.messageGroupBy).not.toHaveBeenCalled();
+    expect(prismaMocks.ticketActivityGroupBy).not.toHaveBeenCalled();
   });
 
   it('derives last activity from messages, not updatedAt', async () => {
@@ -229,6 +254,42 @@ describe('listCustomerTickets', () => {
     const page = await listCustomerTickets({ workspaceSlug: workspace.slug });
 
     expect(page.data[0]?.lastActivityAt).toBe(lastMessageAt.toISOString());
+  });
+
+  it('counts a status change as customer-visible activity', async () => {
+    const lastStatusAt = new Date('2026-01-06T10:00:00Z');
+
+    prismaMocks.ticketFindMany.mockResolvedValue([ticketRow()] as never);
+    prismaMocks.ticketActivityGroupBy.mockResolvedValue([
+      { ticketId: 'ticket-1', _max: { createdAt: lastStatusAt } },
+    ] as never);
+
+    const page = await listCustomerTickets({ workspaceSlug: workspace.slug });
+
+    expect(page.data[0]?.lastActivityAt).toBe(lastStatusAt.toISOString());
+  });
+
+  it('does not count an internal activity row as customer-visible', async () => {
+    // Only STATUS_CHANGED is grouped; the caller cannot be tricked into
+    // treating an assignment or a tag change as something a customer did.
+    const internalActivityAt = new Date('2026-01-07T10:00:00Z');
+
+    prismaMocks.ticketFindMany.mockResolvedValue([ticketRow()] as never);
+    prismaMocks.ticketActivityGroupBy.mockImplementation(
+      (args: { where?: { type?: string } }) => {
+        if (args.where?.type !== 'STATUS_CHANGED') {
+          return Promise.resolve([
+            { ticketId: 'ticket-1', _max: { createdAt: internalActivityAt } },
+          ]);
+        }
+
+        return Promise.resolve([]);
+      },
+    );
+
+    const page = await listCustomerTickets({ workspaceSlug: workspace.slug });
+
+    expect(page.data[0]?.lastActivityAt).toBe(createdAt.toISOString());
   });
 
   it('falls back to creation time for a ticket with no messages', async () => {
@@ -311,9 +372,12 @@ describe('getCustomerTicket', () => {
 
     const args = prismaMocks.messageFindMany.mock.calls[0]?.[0];
 
+    // `authorType`, not `createdById`: a customer reply has no workspace user
+    // at all, so classifying it from a null `createdById` would have labelled
+    // every customer message "System".
     expect(args?.select).toEqual({
       id: true,
-      createdById: true,
+      authorType: true,
       body: true,
       createdAt: true,
     });
@@ -323,18 +387,20 @@ describe('getCustomerTicket', () => {
   it('maps a conversation without member identity', async () => {
     prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
     prismaMocks.messageFindMany.mockResolvedValue([
-      { id: 'm1', createdById: 'agent-1', body: 'On it.', createdAt },
-      { id: 'm2', createdById: null, body: 'Auto-triaged.', createdAt },
+      { id: 'm1', authorType: 'agent', body: 'On it.', createdAt },
+      { id: 'm2', authorType: 'customer', body: 'Still broken.', createdAt },
+      { id: 'm3', authorType: 'system', body: 'Auto-triaged.', createdAt },
     ] as never);
 
     const ticket = await getCustomerTicket({ workspaceSlug: workspace.slug, ticketId: 'ticket-1' });
 
     expect(ticket.conversation.map((entry) => entry.authorLabel)).toEqual([
       'Support team',
+      'You',
       'System',
     ]);
-    expect(JSON.stringify(ticket)).not.toContain('agent-1');
     expect(JSON.stringify(ticket)).not.toContain('"m1"');
+    expect(JSON.stringify(ticket)).not.toContain('authorType');
   });
 
   it('exposes no internal state in the detail payload', async () => {
@@ -500,7 +566,7 @@ describe('createCustomerTicket', () => {
 
     expect(ticket.lastActivityAt).toBe(createdAt.toISOString());
     expect(ticket.conversation).toEqual([]);
-    expect(ticket.availableActions).toEqual([]);
+    expect(ticket.availableActions).toEqual(['reply']);
   });
 
   it('never contacts the database for an unauthenticated caller', async () => {
@@ -511,6 +577,146 @@ describe('createCustomerTicket', () => {
     ).rejects.toBeInstanceOf(CustomerUnauthenticatedError);
 
     expect(prismaMocks.transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCustomerReply', () => {
+  const replyCreatedAt = new Date('2026-02-01T09:00:00Z');
+
+  function createdReply(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'message-1',
+      authorType: 'customer',
+      body: 'Still broken.',
+      createdAt: replyCreatedAt,
+      ...overrides,
+    };
+  }
+
+  it('scopes the ticket read by id, workspace and customer in one query', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageCreate.mockResolvedValue(createdReply() as never);
+
+    await createCustomerReply({
+      workspaceSlug: workspace.slug,
+      ticketId: 'ticket-1',
+      rawInput: { body: 'Still broken.' },
+    });
+
+    expect(prismaMocks.ticketFindFirst.mock.calls[0]?.[0]?.where).toEqual({
+      id: 'ticket-1',
+      workspaceId: workspace.id,
+      customerId: customer.id,
+    });
+  });
+
+  it('attributes the reply to the session customer and to no workspace user', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageCreate.mockResolvedValue(createdReply() as never);
+
+    await createCustomerReply({
+      workspaceSlug: workspace.slug,
+      ticketId: 'ticket-1',
+      rawInput: { body: 'Still broken.' },
+    });
+
+    // The whole authorship guarantee in one object: customerId from the
+    // session, createdById null, authorType explicit.
+    expect(prismaMocks.messageCreate.mock.calls[0]?.[0]?.data).toMatchObject({
+      ticketId: 'ticket-1',
+      customerId: customer.id,
+      createdById: null,
+      authorType: 'customer',
+      body: 'Still broken.',
+    });
+  });
+
+  it('rejects a body that tries to claim authorship or move the ticket', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+
+    await expect(
+      createCustomerReply({
+        workspaceSlug: workspace.slug,
+        ticketId: 'ticket-1',
+        rawInput: { body: 'hi', createdById: 'agent-1', authorType: 'agent' },
+      }),
+    ).rejects.toThrow();
+
+    expect(prismaMocks.messageCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports another customer ticket as not found and writes nothing', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(null);
+
+    await expect(
+      createCustomerReply({
+        workspaceSlug: workspace.slug,
+        ticketId: 'ticket-1',
+        rawInput: { body: 'Still broken.' },
+      }),
+    ).rejects.toBeInstanceOf(CustomerTicketNotFoundError);
+
+    expect(prismaMocks.messageCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reply to a closed ticket', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow({ status: 'closed' }) as never);
+
+    await expect(
+      createCustomerReply({
+        workspaceSlug: workspace.slug,
+        ticketId: 'ticket-1',
+        rawInput: { body: 'Still broken.' },
+      }),
+    ).rejects.toBeInstanceOf(CustomerTicketReplyNotAllowedError);
+
+    expect(prismaMocks.messageCreate).not.toHaveBeenCalled();
+  });
+
+  it('never changes ticket status', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageCreate.mockResolvedValue(createdReply() as never);
+
+    await createCustomerReply({
+      workspaceSlug: workspace.slug,
+      ticketId: 'ticket-1',
+      rawInput: { body: 'Still broken.' },
+    });
+
+    // A single insert. No ticket update means a customer cannot implicitly
+    // reopen or re-triage their own ticket by replying.
+    expect(prismaMocks.ticketFindFirst).toHaveBeenCalledTimes(1);
+    expect(prismaMocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('returns a DTO, never a raw row with the message id', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageCreate.mockResolvedValue(createdReply() as never);
+
+    const { message } = await createCustomerReply({
+      workspaceSlug: workspace.slug,
+      ticketId: 'ticket-1',
+      rawInput: { body: 'Still broken.' },
+    });
+
+    expect(message).not.toHaveProperty('id');
+    expect(message.author).toBe('customer');
+    expect(message.authorLabel).toBe('You');
+    expect(JSON.stringify(message)).not.toContain('message-1');
+  });
+
+  it('never contacts the database for an unauthenticated caller', async () => {
+    mockedRequireSession.mockRejectedValue(new CustomerUnauthenticatedError());
+
+    await expect(
+      createCustomerReply({
+        workspaceSlug: workspace.slug,
+        ticketId: 'ticket-1',
+        rawInput: { body: 'Still broken.' },
+      }),
+    ).rejects.toBeInstanceOf(CustomerUnauthenticatedError);
+
+    expect(prismaMocks.messageCreate).not.toHaveBeenCalled();
   });
 });
 

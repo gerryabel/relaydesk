@@ -1,23 +1,27 @@
 import { prisma } from '@/lib/db/prisma';
 import type { Prisma } from '@/generated/prisma';
 import { requireCustomerInWorkspace } from '@/lib/customer-portal/session';
-import { CustomerTicketNotFoundError } from '@/lib/customer-portal/errors';
+import { CustomerTicketNotFoundError, CustomerTicketReplyNotAllowedError } from '@/lib/customer-portal/errors';
 import {
   CUSTOMER_DEFAULT_TICKET_PRIORITY,
   CUSTOMER_DEFAULT_TICKET_STATUS,
   normalizeCustomerTicketSearch,
+  parseCreateCustomerReplyInput,
   parseCreateCustomerTicketInput,
   parseCustomerTicketListQuery,
   type CustomerTicketListQuery,
 } from '@/lib/customer-portal/schema';
 import {
+  resolveCustomerTicketActions,
   toCustomerMessageView,
   toCustomerTicketDetail,
   toCustomerTicketSummary,
+  type CustomerMessageView,
   type CustomerTicketDetail,
   type CustomerTicketPage,
   type CustomerTicketStatus,
 } from '@/lib/customer-portal/dto';
+import { assertMessageAuthor } from '@/lib/messages/authorship';
 import { buildLastVisibleActivityMap } from '@/lib/customer-portal/activity';
 import { normalizeTicketPagination } from '@/lib/tickets/pagination';
 import {
@@ -50,8 +54,8 @@ import { createAutomationContext } from '@/lib/automation/context';
  *  3. Ticket reads are scoped in the `where` clause by both ids, so a
  *     cross-customer or cross-workspace id matches zero rows. The ticket is
  *     never fetched and authorized afterwards.
- *  4. Only `CustomerTicketDetail` / `CustomerTicketSummary` leave this
- *     module; Prisma rows never do.
+ *  4. Only `CustomerTicketDetail` / `CustomerTicketSummary` /
+ *     `CustomerMessageView` leave this module; Prisma rows never do.
  */
 
 /**
@@ -176,9 +180,12 @@ export async function getCustomerTicket(input: GetCustomerTicketInput): Promise<
     throw new CustomerTicketNotFoundError();
   }
 
+  // `authorType` replaces the Task 2 `createdById` inference: a customer
+  // reply carries no workspace user, and classifying it from a null
+  // `createdById` would have labelled it "System".
   const messages = await prisma.message.findMany({
     where: { ticketId: ticket.id },
-    select: { id: true, createdById: true, body: true, createdAt: true },
+    select: { id: true, authorType: true, body: true, createdAt: true },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
 
@@ -314,6 +321,77 @@ export async function createCustomerTicket(input: {
   };
 }
 
+export type CreateCustomerReplyResult = {
+  message: CustomerMessageView;
+};
+
+/**
+ * Posts a customer-authored reply to a ticket (Phase 9 Task 3).
+ *
+ * Authorization is structural, not a check-then-write: the ticket lookup is
+ * scoped by `workspaceId` *and* `customerId` in the query, so a ticket owned
+ * by another customer, another workspace, or by nobody at all matches zero
+ * rows and raises the same {@link CustomerTicketNotFoundError}.
+ *
+ * Authorship is taken from the resolved session, never from the request. The
+ * body carries only text; `createdById` is `null` and `customerId` is the
+ * session's customer, so a customer can neither forge an agent reply nor post
+ * as another customer.
+ *
+ * Status is left untouched. A reply is not an implicit "please reopen this":
+ * changing workflow state is the support team's action, and `assertTransitionAllowed`
+ * enforces the internal transitions the portal has no business performing.
+ *
+ * The return value is a built DTO, so no Prisma row — and no raw message id —
+ * can leak into a response from here.
+ */
+export async function createCustomerReply(input: {
+  workspaceSlug: string;
+  ticketId: string;
+  rawInput: unknown;
+}): Promise<CreateCustomerReplyResult> {
+  const { workspace, customer } = await requireCustomerInWorkspace(input.workspaceSlug);
+  const parsed = parseCreateCustomerReplyInput(input.rawInput);
+
+  assertMessageAuthor({
+    authorType: 'customer',
+    createdById: null,
+    customerId: customer.customerId,
+  });
+
+  const ticket = await prisma.ticket.findFirst({
+    where: {
+      id: input.ticketId,
+      workspaceId: workspace.id,
+      customerId: customer.customerId,
+    },
+    select: { id: true, status: true },
+  });
+
+  if (!ticket) {
+    throw new CustomerTicketNotFoundError();
+  }
+
+  // Same predicate the DTO's `availableActions` uses, so the UI cannot offer a
+  // reply that the service refuses (or vice versa).
+  if (!resolveCustomerTicketActions(ticket.status).includes('reply')) {
+    throw new CustomerTicketReplyNotAllowedError();
+  }
+
+  const message = await prisma.message.create({
+    data: {
+      ticketId: ticket.id,
+      customerId: customer.customerId,
+      createdById: null,
+      authorType: 'customer',
+      body: parsed.body,
+    },
+    select: { id: true, authorType: true, body: true, createdAt: true },
+  });
+
+  return { message: toCustomerMessageView(message) };
+}
+
 /**
  * Builds the ownership predicate.
  *
@@ -348,9 +426,15 @@ function buildOwnedTicketWhere(input: {
 /**
  * Loads the newest customer-visible activity timestamp for a set of tickets.
  *
- * One grouped query for the whole page, never one per ticket. A ticket with
- * no messages resolves to its own creation time, which is the correct
- * customer-visible answer: nothing has been said since it was opened.
+ * Two grouped queries for the whole page — newest message, newest
+ * `STATUS_CHANGED` activity — and never one query per ticket. A ticket with
+ * neither resolves to its own creation time, which is the correct
+ * customer-visible answer: nothing has happened since it was opened.
+ *
+ * The activity query selects only `ticketId`, `createdAt` and the rows whose
+ * `type` is `STATUS_CHANGED`; `actorId` and `metadata` are never read, so an
+ * internal assignee or a priority edit cannot reach the portal even by
+ * accident.
  */
 async function loadLastVisibleActivity(
   tickets: CustomerTicketRow[],
@@ -359,21 +443,37 @@ async function loadLastVisibleActivity(
     return new Map();
   }
 
-  const grouped = await prisma.message.groupBy({
-    by: ['ticketId'],
-    where: { ticketId: { in: tickets.map((ticket) => ticket.id) } },
-    _max: { createdAt: true },
-  });
+  const ticketIds = tickets.map((ticket) => ticket.id);
+
+  const [groupedMessages, groupedActivity] = await Promise.all([
+    prisma.message.groupBy({
+      by: ['ticketId'],
+      where: { ticketId: { in: ticketIds } },
+      _max: { createdAt: true },
+    }),
+    prisma.ticketActivity.groupBy({
+      by: ['ticketId'],
+      where: { ticketId: { in: ticketIds }, type: 'STATUS_CHANGED' },
+      _max: { createdAt: true },
+    }),
+  ]);
 
   const latestMessageAt = new Map<string, Date>();
+  const latestStatusChangeAt = new Map<string, Date>();
 
-  for (const row of grouped) {
+  for (const row of groupedMessages) {
     if (row._max.createdAt) {
       latestMessageAt.set(row.ticketId, row._max.createdAt);
     }
   }
 
-  return buildLastVisibleActivityMap(tickets, latestMessageAt);
+  for (const row of groupedActivity) {
+    if (row._max.createdAt) {
+      latestStatusChangeAt.set(row.ticketId, row._max.createdAt);
+    }
+  }
+
+  return buildLastVisibleActivityMap(tickets, latestMessageAt, latestStatusChangeAt);
 }
 
-export { CustomerTicketNotFoundError };
+export { CustomerTicketNotFoundError, CustomerTicketReplyNotAllowedError };

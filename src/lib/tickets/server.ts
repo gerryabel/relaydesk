@@ -20,6 +20,7 @@ import {
 import { createOutboxEvent } from '@/lib/outbox/outbox';
 import { queueAutomationEvaluation } from '@/lib/automation/outbox';
 import { createAutomationContext } from '@/lib/automation/context';
+import { queueCustomerStatusChangedEmail } from '@/lib/customer-notifications/events';
 
 export class TicketNotFoundError extends Error {
   constructor(message = 'Tiket tidak ditemukan.') {
@@ -413,6 +414,20 @@ export async function updateTicket(id: string, input: UpdateTicketInput): Promis
       });
     }
 
+    // Customer notification rides the same transaction as the status change
+    // and its activity row. `updated.customerId` is the customer linked after
+    // the write, so a combined "link + change status" update notifies the
+    // customer who now owns the ticket rather than nobody.
+    if (hasStatusChange && parsed.status) {
+      await queueCustomerStatusChangedEmail(tx, {
+        workspaceId: membership.workspaceId,
+        ticketId: updated.id,
+        customerId: updated.customerId,
+        fromStatus: existing.status,
+        toStatus: parsed.status,
+      });
+    }
+
     if (hasPriorityChange && parsed.priority) {
       await tx.ticketActivity.create({
         data: {
@@ -530,6 +545,14 @@ export async function closeTicket(id: string): Promise<TicketWithCreator> {
         type: 'STATUS_CHANGED',
         metadata: { from: existing.status, to: 'closed' },
       },
+    });
+
+    await queueCustomerStatusChangedEmail(tx, {
+      workspaceId: membership.workspaceId,
+      ticketId: updated.id,
+      customerId: updated.customerId,
+      fromStatus: existing.status,
+      toStatus: 'closed',
     });
 
     await queueAutomationEvaluation(

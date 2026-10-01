@@ -1,6 +1,7 @@
 import { ZodError } from 'zod';
 import {
   CustomerTicketNotFoundError,
+  CustomerTicketReplyNotAllowedError,
   CustomerTicketValidationError,
   CustomerUnauthenticatedError,
   CustomerWorkspaceMismatchError,
@@ -8,7 +9,7 @@ import {
 } from '@/lib/customer-portal/errors';
 
 /**
- * Customer API error mapping (Phase 9 Task 2).
+ * Customer API error mapping (Phase 9 Task 2; reply mapping added in Task 3).
  *
  * One translation point from domain error to HTTP status, so every portal
  * route answers identically and no handler has to remember the table.
@@ -20,6 +21,7 @@ import {
  * | workspace slug resolves to nothing | 404 | `Not found` |
  * | ticket missing, other customer's, or other workspace's | 404 | `Not found` |
  * | invalid customer input | 400 | the first validation message |
+ * | reply not available on a closed ticket | 400 | the literal refusal message |
  * | anything else | 500 | a fixed generic message |
  *
  * The 500 branch is the important one. `error` is discarded, not formatted:
@@ -64,6 +66,13 @@ export function toCustomerPortalError(
   }
 
   if (error instanceof CustomerTicketValidationError) {
+    return { status: 400, body: { error: error.message } };
+  }
+
+  // 400, not 409: the portal's status vocabulary is the one in the table
+  // above, and a closed ticket is a rejection of this request rather than a
+  // resource conflict a client could resolve by changing its headers.
+  if (error instanceof CustomerTicketReplyNotAllowedError) {
     return { status: 400, body: { error: error.message } };
   }
 

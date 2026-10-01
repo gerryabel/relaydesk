@@ -113,8 +113,29 @@ function AttachmentChip({ attachment }: { attachment: { id: string; originalFile
   );
 }
 
+/**
+ * Names the author of an internal conversation message.
+ *
+ * Before `Message.authorType` existed, this was `createdBy?.name ?? 'Unknown'`,
+ * which printed "Unknown" for every message a customer wrote — an agent could
+ * not tell their own reply from a customer's. Authorship is now explicit, so
+ * the customer's name is shown and only a genuinely unattributable row falls
+ * back to "System".
+ */
+function messageAuthorLabel(message: MessageWithCreator): string {
+  if (message.authorType === 'customer') {
+    return message.customer?.name ?? 'Customer';
+  }
+
+  if (message.authorType === 'system') {
+    return 'System';
+  }
+
+  return message.createdBy?.name ?? 'Unknown';
+}
+
 function MessageItem({ message }: { message: MessageWithCreator }) {
-  const author = message.createdBy?.name ?? 'Unknown';
+  const author = messageAuthorLabel(message);
   const createdAt = new Date(message.createdAt).toLocaleString('id-ID');
 
   return (

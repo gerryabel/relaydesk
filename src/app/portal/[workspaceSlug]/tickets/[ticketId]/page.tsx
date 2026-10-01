@@ -57,7 +57,7 @@ export default async function CustomerTicketDetailPage({
         Back to my tickets
       </Link>
 
-      <CustomerTicketDetailView ticket={ticket} />
+      <CustomerTicketDetailView ticket={ticket} workspaceSlug={workspaceSlug} />
     </div>
   );
 }

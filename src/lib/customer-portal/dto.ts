@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ticketPrioritySchema, ticketStatusSchema } from '@/lib/tickets/schema';
+import type { MessageAuthorType } from '@/lib/messages/authorship';
 import { formatTicketReference, toTicketReferenceCode } from './reference';
 
 /**
@@ -14,6 +15,7 @@ import { formatTicketReference, toTicketReferenceCode } from './reference';
  * Deliberately absent from every DTO below:
  *
  *  - `workspaceId`, `createdById`, `assignedToId`, `customerId`
+ *  - `Message.authorType`'s raw value is mapped to a label, never exposed
  *  - `updatedAt` (moves on internal-only edits)
  *  - `responseSlaDeadline`, `resolutionSlaDeadline`, `firstResponseAt`
  *  - `InternalNote`, `TicketActivity`, `AutomationExecution`, `OutboxEvent`,
@@ -50,7 +52,7 @@ export type CustomerTicketSummary = {
 /**
  * Customer actions a ticket actually supports.
  *
- * `reply` is Task 3 and `attach` is Task 4, so Task 2 returns an empty list.
+ * `reply` arrives in Task 3; `attach` is Task 4 and is still never returned.
  * The field exists so the UI renders from capability data rather than from a
  * hard-coded "no reply box" branch that Task 3 would have to remember to
  * remove.
@@ -58,18 +60,38 @@ export type CustomerTicketSummary = {
 export type CustomerTicketAction = 'reply' | 'attach';
 
 /**
+ * Statuses in which a customer reply is refused.
+ *
+ * A closed ticket is part of the customer's record; re-opening it silently
+ * would contradict what the portal just told them. Replying to a resolved or
+ * waiting-on-us ticket is allowed and does not change the status — that is
+ * the customer's call to make with the support team, not the portal's.
+ */
+const REPLY_BLOCKED_STATUSES: ReadonlySet<CustomerTicketStatus> = new Set<CustomerTicketStatus>(['closed']);
+
+/**
+ * Resolves the action list for a ticket in its current status.
+ *
+ * Capability data rather than a UI-side condition: the API returns the same
+ * list the page renders from, so the reply box cannot appear for a status the
+ * service would reject.
+ */
+export function resolveCustomerTicketActions(status: CustomerTicketStatus): CustomerTicketAction[] {
+  return REPLY_BLOCKED_STATUSES.has(status) ? [] : ['reply'];
+}
+
+/**
  * Customer-visible author of a conversation entry.
  *
- * Task 3 introduces an explicit `Message.authorType`; until then the portal
- * must classify from what exists. Under the current model every message has
- * a non-null `createdById` (`createMessage` is the only writer and always
- * sets the acting workspace user), so `createdById === null` is the only
- * shape that is not an agent reply — i.e. a system entry.
+ * Task 3 introduces an explicit `Message.authorType`, so the portal reads the
+ * value the writer recorded rather than inferring authorship from which
+ * foreign key happens to be null.
  *
- * No member identity is exposed either way: the customer learns whether a
- * message came from the support team or the system, never who sent it.
+ * No member identity is exposed in any case: the customer learns whether a
+ * message came from the support team, from themselves, or from the system,
+ * never which agent sent it.
  */
-export type CustomerMessageAuthor = 'support' | 'system';
+export type CustomerMessageAuthor = 'support' | 'customer' | 'system';
 
 export type CustomerMessageView = {
   /** Stable short reference. The raw message id is never serialized. */
@@ -106,31 +128,44 @@ export type CustomerTicketPage = {
 
 const AUTHOR_LABELS: Record<CustomerMessageAuthor, string> = {
   support: 'Support team',
+  customer: 'You',
   system: 'System',
 };
 
 /**
- * Classifies a message author for the customer conversation.
+ * Maps `Message.authorType` onto the portal's author vocabulary.
  *
- * Replaced wholesale once Task 3 makes authorship explicit on `Message`.
+ * A one-to-one mapping, deliberately: the three values Task 3 defines are
+ * exactly the three the customer can meaningfully distinguish. Anything
+ * unexpected falls back to `system`, the least revealing of the three, so a
+ * future author type cannot accidentally render as the customer's own words.
  */
-export function resolveCustomerMessageAuthor(createdById: string | null): CustomerMessageAuthor {
-  return createdById === null ? 'system' : 'support';
+export function resolveCustomerMessageAuthor(authorType: MessageAuthorType | string): CustomerMessageAuthor {
+  switch (authorType) {
+    case 'agent':
+      return 'support';
+    case 'customer':
+      return 'customer';
+    default:
+      return 'system';
+  }
 }
 
 /**
  * Builds a customer-visible conversation entry.
  *
- * Accepts only the four message fields the portal is allowed to read, so a
- * caller cannot widen the projection by handing over a fuller row.
+ * Accepts only the fields the portal is allowed to read, so a caller cannot
+ * widen the projection by handing over a fuller row. `createdById` and
+ * `customerId` are not accepted at all — authorship arrives as `authorType`,
+ * which is the only field that decides what the customer sees.
  */
 export function toCustomerMessageView(input: {
   id: string;
-  createdById: string | null;
+  authorType: MessageAuthorType | string;
   body: string;
   createdAt: Date;
 }): CustomerMessageView {
-  const author = resolveCustomerMessageAuthor(input.createdById);
+  const author = resolveCustomerMessageAuthor(input.authorType);
 
   return {
     reference: toTicketReferenceCode(input.id),
@@ -171,8 +206,9 @@ export function toCustomerTicketSummary(input: {
 /**
  * Builds the customer ticket detail payload.
  *
- * `availableActions` is fixed to the empty list for Task 2; see
- * {@link CustomerTicketAction}.
+ * `availableActions` is derived from the status via
+ * {@link resolveCustomerTicketActions}, so the API response and the rendered
+ * page cannot disagree about whether replying is allowed.
  */
 export function toCustomerTicketDetail(input: {
   id: string;
@@ -185,7 +221,7 @@ export function toCustomerTicketDetail(input: {
   resolvedAt: Date | null;
   conversation: CustomerMessageView[];
 }): CustomerTicketDetail {
-  const availableActions: CustomerTicketAction[] = [];
+  const availableActions = resolveCustomerTicketActions(input.status);
 
   return {
     id: input.id,

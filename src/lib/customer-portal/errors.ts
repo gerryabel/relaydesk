@@ -52,3 +52,18 @@ export class CustomerTicketValidationError extends CustomerAccessError {
     this.fieldErrors = fieldErrors;
   }
 }
+
+/**
+ * The customer may not reply to this ticket right now.
+ *
+ * Distinct from {@link CustomerTicketNotFoundError} because the ticket *is*
+ * visible — it is closed, and saying so is useful, not a disclosure. The route
+ * layer renders it as `400`, not `409`: the portal's status vocabulary is the
+ * one in `./http`, and the useful signal to the customer is "this will never
+ * work as written" rather than a resource conflict.
+ */
+export class CustomerTicketReplyNotAllowedError extends CustomerAccessError {
+  constructor(message = 'This ticket is closed, so replies are no longer available.') {
+    super(message, 'CustomerTicketReplyNotAllowedError');
+  }
+}

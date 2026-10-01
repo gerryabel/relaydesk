@@ -6,6 +6,7 @@ import { createAutomationInternalNote } from '@/lib/internal-notes/automation';
 import { createAutomationNotification } from '@/lib/notifications/automation';
 import { queueAutomationEvaluation } from '@/lib/automation/outbox';
 import { createAutomationContext } from '@/lib/automation/context';
+import { queueCustomerStatusChangedEmail } from '@/lib/customer-notifications/events';
 
 /**
  * Helper: build a completed result.
@@ -213,7 +214,7 @@ const setStatusHandler: ActionHandler = async (ctx, tx) => {
 
   const ticket = await tx.ticket.findFirst({
     where: { id: ctx.ticketId, workspaceId: ctx.workspaceId },
-    select: { id: true, status: true, resolvedAt: true },
+    select: { id: true, status: true, resolvedAt: true, customerId: true },
   });
   if (!ticket) {
     return permanentFailure(`Ticket ${ctx.ticketId} not found in workspace ${ctx.workspaceId}`);
@@ -256,6 +257,18 @@ const setStatusHandler: ActionHandler = async (ctx, tx) => {
         causedByAutomation: true,
       },
     },
+  });
+
+  // An automation can move a customer's ticket without any human doing it.
+  // Without this the customer portal would show a stale status until they
+  // happened to reload, so the status-change email is queued here too — in
+  // the same transaction as the update and its activity row.
+  await queueCustomerStatusChangedEmail(tx, {
+    workspaceId: ctx.workspaceId,
+    ticketId: updated.id,
+    customerId: updated.customerId,
+    fromStatus: ticket.status,
+    toStatus: status,
   });
 
   await emitAutomationEvent(

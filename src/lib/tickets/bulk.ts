@@ -12,6 +12,7 @@ import {
   createTicketAssignedNotification,
   createTicketStatusChangedNotification,
 } from '@/lib/notifications/server';
+import { queueCustomerStatusChangedEmail } from '@/lib/customer-notifications/events';
 
 type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 
@@ -84,6 +85,8 @@ export type TicketBulkSelection = {
   assignedToId: string | null;
   resolvedAt: Date | null;
   title: string;
+  /** Present so a bulk status change can decide whether to notify a customer. */
+  customerId: string | null;
 };
 
 type BulkAction = 'assign' | 'status' | 'priority' | 'add_tag' | 'remove_tag';
@@ -189,6 +192,7 @@ async function loadBulkSelection(ticketIds: string[], workspaceId: string): Prom
       assignedToId: true,
       resolvedAt: true,
       title: true,
+      customerId: true,
     },
   });
 
@@ -288,6 +292,16 @@ async function applyBulkStatusChange(tx: TransactionClient, tickets: TicketBulkS
         tx,
       });
     }
+
+    // One event per ticket, inside the caller's transaction, skipped when the
+    // ticket has no customer or the status is unchanged (`noOpCount` above).
+    await queueCustomerStatusChangedEmail(tx, {
+      workspaceId: ticket.workspaceId,
+      ticketId: updated.id,
+      customerId: ticket.customerId,
+      fromStatus: ticket.status,
+      toStatus: nextStatus,
+    });
 
     updatedCount += 1;
   }

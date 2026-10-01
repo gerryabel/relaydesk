@@ -14,9 +14,12 @@ import {
   toCustomerTicketSummary,
 } from '@/lib/customer-portal/dto';
 import {
+  createCustomerReplySchema,
   createCustomerTicketSchema,
+  CUSTOMER_REPLY_BODY_MAX_LENGTH,
   customerTicketListQuerySchema,
   normalizeCustomerTicketListParams,
+  parseCreateCustomerReplyInput,
   parseCreateCustomerTicketInput,
   parseCustomerTicketListQuery,
 } from '@/lib/customer-portal/schema';
@@ -101,6 +104,37 @@ describe('last visible activity', () => {
     expect(activity.get('a')?.getTime()).toBe(createdAt.getTime());
     expect(activity.get('b')?.getTime()).toBe(messageAt.getTime());
   });
+
+  it('counts a status change as visible activity', () => {
+    const statusAt = new Date('2026-01-04T10:00:00Z');
+
+    expect(resolveLastVisibleActivity(createdAt, null, statusAt).getTime()).toBe(statusAt.getTime());
+  });
+
+  it('takes the latest of message and status change', () => {
+    const messageAt = new Date('2026-01-03T10:00:00Z');
+    const statusAt = new Date('2026-01-05T10:00:00Z');
+    const laterMessageAt = new Date('2026-01-06T10:00:00Z');
+
+    expect(resolveLastVisibleActivity(createdAt, messageAt, statusAt).getTime()).toBe(statusAt.getTime());
+    expect(resolveLastVisibleActivity(createdAt, laterMessageAt, statusAt).getTime()).toBe(
+      laterMessageAt.getTime(),
+    );
+  });
+
+  it('per-ticket status changes map without leaking across tickets', () => {
+    const a = { id: 'a', createdAt };
+    const b = { id: 'b', createdAt };
+    const statusAt = new Date('2026-01-04T10:00:00Z');
+    const activity = buildLastVisibleActivityMap(
+      [a, b],
+      new Map(),
+      new Map([['b', statusAt]]),
+    );
+
+    expect(activity.get('a')?.getTime()).toBe(createdAt.getTime());
+    expect(activity.get('b')?.getTime()).toBe(statusAt.getTime());
+  });
 });
 
 describe('customer DTOs', () => {
@@ -143,7 +177,7 @@ describe('customer DTOs', () => {
     }
   });
 
-  it('detail carries no internal fields and no actions in Task 2', () => {
+  it('detail carries no internal fields and offers reply on an open ticket', () => {
     const detail = toCustomerTicketDetail({
       id: 'ticket-1',
       title: 'Printer is offline',
@@ -170,28 +204,62 @@ describe('customer DTOs', () => {
       'title',
     ]);
 
-    // Task 3 adds `reply`, Task 4 adds `attach`. Neither is available yet, and
-    // the UI must render from this list rather than from a hard-coded absence.
-    expect(detail.availableActions).toEqual([]);
+    // Task 3 offers `reply`; Task 4 adds `attach`, which is still never
+    // returned. The UI renders from this list rather than from a hard-coded
+    // condition, so the page and the write path cannot disagree.
+    expect(detail.availableActions).toEqual(['reply']);
   });
 
-  it('classifies message authors without exposing member identity', () => {
-    expect(resolveCustomerMessageAuthor('user-1')).toBe('support');
-    expect(resolveCustomerMessageAuthor(null)).toBe('system');
+  it('withholds reply on a closed ticket', () => {
+    const closed = toCustomerTicketDetail({
+      id: 'ticket-1',
+      title: 'Printer is offline',
+      description: null,
+      status: 'closed',
+      priority: 'medium',
+      createdAt: now,
+      lastActivityAt: now,
+      resolvedAt: now,
+      conversation: [],
+    });
+
+    expect(closed.availableActions).toEqual([]);
+  });
+
+  it('classifies message authors from authorType without exposing member identity', () => {
+    expect(resolveCustomerMessageAuthor('agent')).toBe('support');
+    expect(resolveCustomerMessageAuthor('customer')).toBe('customer');
+    expect(resolveCustomerMessageAuthor('system')).toBe('system');
+    // An unknown future value degrades to the least revealing label rather
+    // than rendering as the customer's own words.
+    expect(resolveCustomerMessageAuthor('something-else')).toBe('system');
   });
 
   it('message view never serializes the raw message id', () => {
     const view = toCustomerMessageView({
       id: 'message-secret-id',
-      createdById: 'user-1',
+      authorType: 'agent',
       body: 'Looking into it.',
       createdAt: now,
     });
 
     expect(view).not.toHaveProperty('id');
     expect(view).not.toHaveProperty('createdById');
+    expect(view).not.toHaveProperty('authorType');
     expect(JSON.stringify(view)).not.toContain('message-secret-id');
     expect(view.reference).toBe(toTicketReferenceCode('message-secret-id'));
+  });
+
+  it('a customer reply is attributed to the customer, not to the system', () => {
+    const view = toCustomerMessageView({
+      id: 'message-secret-id',
+      authorType: 'customer',
+      body: 'Still broken.',
+      createdAt: now,
+    });
+
+    expect(view.author).toBe('customer');
+    expect(view.authorLabel).toBe('You');
   });
 });
 
@@ -235,6 +303,52 @@ describe('create ticket input', () => {
 
   it('surfaces a portal-safe error rather than a raw ZodError', () => {
     expect(() => parseCreateCustomerTicketInput({})).toThrow(CustomerTicketValidationError);
+  });
+});
+
+describe('customer reply input', () => {
+  it('accepts exactly one field', () => {
+    expect(createCustomerReplySchema.parse({ body: '  Still broken.  ' })).toEqual({
+      body: 'Still broken.',
+    });
+  });
+
+  it.each([
+    'customerId',
+    'workspaceId',
+    'createdById',
+    'authorType',
+    'status',
+    'firstResponseAt',
+    'ticketId',
+  ])('rejects a caller-supplied %s', (key) => {
+    const payload: Record<string, unknown> = { body: 'Still broken.' };
+    payload[key] = 'anything';
+
+    expect(() => createCustomerReplySchema.parse(payload)).toThrow();
+  });
+
+  it('rejects an empty or whitespace-only body', () => {
+    expect(() => createCustomerReplySchema.parse({ body: '' })).toThrow();
+    expect(() => createCustomerReplySchema.parse({ body: '   \n  ' })).toThrow();
+  });
+
+  it('rejects a missing body', () => {
+    expect(() => createCustomerReplySchema.parse({})).toThrow();
+  });
+
+  it('enforces the length bound', () => {
+    expect(() =>
+      createCustomerReplySchema.parse({ body: 'a'.repeat(CUSTOMER_REPLY_BODY_MAX_LENGTH + 1) }),
+    ).toThrow();
+    expect(
+      createCustomerReplySchema.parse({ body: 'a'.repeat(CUSTOMER_REPLY_BODY_MAX_LENGTH) }).body,
+    ).toHaveLength(CUSTOMER_REPLY_BODY_MAX_LENGTH);
+  });
+
+  it('surfaces a portal-safe error rather than a raw ZodError', () => {
+    expect(() => parseCreateCustomerReplyInput({})).toThrow(CustomerTicketValidationError);
+    expect(parseCreateCustomerReplyInput({ body: 'ok' })).toEqual({ body: 'ok' });
   });
 });
 

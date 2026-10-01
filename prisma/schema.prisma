@@ -223,6 +223,7 @@ model Customer {
 
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   tickets     Ticket[]
+  messages    Message[]
   customerMagicLinks CustomerMagicLink[]
   customerSessions CustomerSession[]
 
@@ -321,20 +322,43 @@ model Ticket {
   @@index([customerId])
 }
 
+enum MessageAuthorType {
+  agent
+  customer
+  system
+}
+
 model Message {
-  id          String   @id @default(cuid())
+  id          String             @id @default(cuid())
   ticketId    String
   createdById String?
+  customerId  String?
+  authorType  MessageAuthorType @default(system)
   body        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
-  ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  createdBy User?  @relation("MessageCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  ticket    Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // NoAction, not SetNull: an agent message that lost its author would violate
+  // message_author_agent, so authorship history must not be silently erased.
+  // SetNull would try to null the column and surface as a CHECK violation;
+  // Restrict is checked too early to coexist with workspace cascade
+  // (Workspace -> Membership -> User). NoAction defers the check to the end of
+  // the statement, so a cascading workspace delete still completes while a
+  // direct delete of an author who has written a message is refused.
+  createdBy  User?     @relation("MessageCreator", fields: [createdById], references: [id], onDelete: NoAction)
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
   attachments Attachment[]
 
   @@index([ticketId])
   @@index([createdById])
+  @@index([customerId])
+
+  // The authorship invariant (exactly one of createdById / customerId, matching
+  // authorType) is enforced by PostgreSQL CHECK constraints named
+  // message_author_agent / message_author_customer / message_author_system.
+  // Prisma 7.9 cannot express `@@check`, so those live in the migration SQL
+  // only. Do not relax them here without a migration change.
 }
 
 model InternalNote {

@@ -1,4 +1,5 @@
 import { handleEmailOutboxEvent } from './email-handler';
+import { handleCustomerEmailEvent } from './customer-email';
 import { handleSlaAtRiskEvent } from './sla';
 import { handleSlaBreachedEvent } from './sla-breached';
 import { handleAutomationEvaluation } from './automation';
@@ -8,7 +9,8 @@ import { handleCustomerMagicLinkEvent } from './customer-magic-link';
 export const HandlerRegistry: Record<import('@/lib/outbox/types').OutboxEventType, import('./types').OutboxHandler> = {
   TICKET_CREATED: async () => {},
   TICKET_ASSIGNED: handleEmailOutboxEvent,
-  TICKET_REPLIED: async () => {},
+  TICKET_REPLIED: handleCustomerEmailEvent,
+  TICKET_STATUS_CHANGED: handleCustomerEmailEvent,
   TICKET_RESOLVED: async () => {},
   SLA_AT_RISK: handleSlaAtRiskEvent,
   SLA_BREACHED: handleSlaBreachedEvent,
