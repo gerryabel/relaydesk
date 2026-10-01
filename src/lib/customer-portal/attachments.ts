@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 import { TicketActivityType } from '@/generated/prisma';
 import { attachmentConfig } from '@/lib/attachments/config';
 import {
+  ATTACHMENT_FALLBACK_MIME_TYPE,
   FALLBACK_ATTACHMENT_FILENAME,
   normalizeAttachmentMimeType,
   sanitizeAttachmentFilename,
@@ -18,6 +19,7 @@ import {
 } from '@/lib/customer-portal/errors';
 import type { CustomerAttachmentView } from '@/lib/customer-portal/dto';
 import type { MessageAuthorType } from '@/lib/messages/authorship';
+import type { Prisma } from '@/generated/prisma';
 
 /**
  * Customer attachment service (Phase 9 Task 4).
@@ -72,6 +74,25 @@ export type CustomerAttachmentDownload = {
 };
 
 /**
+ * The only value substituted for a MIME type this module cannot vouch for
+ * (OMP remediation, Task 4 audit).
+ *
+ * The download route writes `mimeType` straight into a response header. The
+ * previous `normalizeAttachmentMimeType(stored) || stored` fell back to the
+ * *raw stored string* whenever normalization came back empty — so a legacy row
+ * holding `text/plain\r\nX-Injected: yes` (or anything else the normalizer
+ * rejects) would have been handed to `new Response()` verbatim. Whether that
+ * produces a second header depends on the runtime: Node's `Headers` throws on a
+ * CR/LF in a value, but that is a downstream accident, not a control, and other
+ * runtimes are more permissive. The application must decide the value, not the
+ * HTTP layer.
+ *
+ * The constant itself lives in `./filename`, so this server-only path and the
+ * client-safe customer DTO cannot drift into two different fallbacks.
+ */
+const FALLBACK_CONTENT_TYPE = ATTACHMENT_FALLBACK_MIME_TYPE;
+
+/**
  * Author types whose attachments a customer may see and download.
  *
  * `agent` and `customer` are the customer-visible conversation. `system` is
@@ -97,7 +118,7 @@ function generateStorageKey(): string {
 /**
  * Asserts the file is something the portal is willing to accept.
  *
- * Four properties, all server-derived:
+ * Three properties, all server-derived:
  *
  *  - **non-empty** — an empty buffer is never a useful attachment and would
  *    otherwise occupy a row and a storage object forever;
@@ -106,9 +127,12 @@ function generateStorageKey(): string {
  *  - **allowlisted MIME** — the allowlist is exact-match and contains no
  *    wildcards, so a bare `image`/`png` wildcard, `application/x-executable`
  *    and `application/javascript` are all rejected regardless of what the file
- *    is called;
- *  - **documented count** — bounded per message so one message cannot be used to
- *    accumulate unbounded storage.
+ *    is called.
+ *
+ * A fourth property, a bounded per-message count so one message cannot be used
+ * to accumulate unbounded storage, is enforced separately and not here: it is a
+ * statement about the database, not about these bytes, and it must be read under
+ * the same lock that guards the insert. See {@link assertAttachmentCapacityUnderLock}.
  *
  * Returns the values to persist, so the caller cannot accidentally write the
  * un-normalized inputs alongside the checked ones.
@@ -117,7 +141,6 @@ function validateCustomerAttachment(input: {
   buffer: Buffer;
   declaredMimeType: string | null | undefined;
   declaredFilename: string | null | undefined;
-  currentAttachmentCount: number;
 }): { filename: string; mimeType: string; sizeBytes: number } {
   if (input.buffer.length === 0) {
     throw new CustomerAttachmentValidationError('The file is empty.');
@@ -129,11 +152,10 @@ function validateCustomerAttachment(input: {
     );
   }
 
-  if (input.currentAttachmentCount >= CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT) {
-    throw new CustomerAttachmentValidationError(
-      `A message can have at most ${CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT} attachments.`,
-    );
-  }
+  // The count cap is deliberately NOT checked here. It moved into the metadata
+  // transaction, under a row lock on the message — see the comment above
+  // `lockMessageForCustomerAttachment`. These three checks are pure functions of
+  // the request bytes, so they stay outside the transaction and outside the lock.
 
   const mimeType = normalizeAttachmentMimeType(input.declaredMimeType);
 
@@ -216,15 +238,12 @@ export async function uploadCustomerAttachment(
     throw new CustomerAttachmentNotFoundError();
   }
 
-  const currentAttachmentCount = await prisma.attachment.count({
-    where: { messageId: message.id },
-  });
-
+  // Byte-level checks only. No count here: the capacity check must not run before
+  // the lock, or it is worthless (see the upload function's doc comment).
   const validated = validateCustomerAttachment({
     buffer: input.buffer,
     declaredMimeType: input.declaredMimeType,
     declaredFilename: input.declaredFilename,
-    currentAttachmentCount,
   });
 
   const storageKey = generateStorageKey();
@@ -246,6 +265,18 @@ export async function uploadCustomerAttachment(
 
   try {
     created = await prisma.$transaction(async (tx) => {
+      // Lock, then count, then insert. All three in one transaction, so the
+      // count and the row it protects cannot be interleaved with a sibling.
+      //
+      // Serializes every concurrent upload to this one message. Taken before the
+      // count and held until commit, so the count this transaction sees already
+      // accounts for any sibling upload that committed first — and a sibling
+      // that has not yet committed is blocked here, so it will read *our* new
+      // row rather than a stale 9.
+      await lockMessageForCustomerAttachment(tx, message.id);
+
+      await assertAttachmentCapacityUnderLock(tx, message.id);
+
       const attachment = await tx.attachment.create({
         data: {
           messageId: message.id,
@@ -286,6 +317,24 @@ export async function uploadCustomerAttachment(
     console.error('[customer-attachments] attachment metadata write failed:', error);
 
     await cleanupStoredObject(storage, storageKey);
+
+    // Two outcomes of this transaction are not infrastructure faults and must
+    // keep their own class and status rather than being flattened into the
+    // generic 500 below:
+    //
+    //  - **capacity** — a full message is the business rule working as intended;
+    //  - **vanished message** — the row resolved moments ago was deleted before
+    //    the lock was taken, so there is genuinely nothing to attach to. This one
+    //    only became reachable when the lock was added, which is exactly why it
+    //    is called out: without this, deleting a message mid-upload would
+    //    surface as a 500 rather than the 404 the same request already produces
+    //    when the row is gone before the transaction.
+    if (
+      error instanceof CustomerAttachmentValidationError ||
+      error instanceof CustomerAttachmentNotFoundError
+    ) {
+      throw error;
+    }
 
     // Re-thrown as a portal-safe error: a Prisma failure carries SQL, constraint
     // names and parameter values, none of which may reach a customer.
@@ -361,13 +410,90 @@ export async function downloadCustomerAttachment(
   return {
     buffer,
     filename: sanitizeAttachmentFilename(attachment.originalFilename),
-    // Normalized again before it becomes a response header. Both upload paths
-    // already stored a normalized, allowlisted value, so this is belt-and-braces
-    // for rows written before either path did — a stored string with parameters
-    // or odd casing must not reach `Content-Type` unexamined.
-    mimeType: normalizeAttachmentMimeType(attachment.mimeType) || attachment.mimeType,
+    // Fail closed. Never the raw stored value: this string becomes a response
+    // header, and a legacy row may hold anything an agent's browser sent. If
+    // normalization cannot vouch for the value, the customer gets a neutral
+    // type rather than an attacker-influenced one.
+    mimeType: normalizeAttachmentMimeType(attachment.mimeType) || FALLBACK_CONTENT_TYPE,
     sizeBytes: attachment.sizeBytes,
   };
+}
+
+type AttachmentLockClient = Pick<Prisma.TransactionClient, '$queryRaw' | 'attachment'>;
+
+/**
+ * Serializes customer attachment uploads for one message.
+ *
+ * Why a row lock rather than an advisory lock: the `Message` row already exists
+ * and is already the natural unit of work for an attachment, so this introduces
+ * no second locking vocabulary — the same reasoning, and the same
+ * `SELECT ... FOR UPDATE` shape, as `lockCustomerForMagicLinkIssuance` in
+ * `lib/customer-access/provisioning.ts`. The lock is released at commit or
+ * rollback, so it cannot leak across pooled connections.
+ *
+ * Why lock at all: the capacity check and the insert must be one atomic step.
+ * Previously the count was read *before* the transaction, so two concurrent
+ * uploads to a message holding 9 attachments both read `9`, both saw room, and
+ * both inserted — leaving 11 attachments on a message whose documented limit is
+ * 10. A count is only meaningful if it is read while every other inserter for
+ * that message is excluded.
+ *
+ * Why this is not a global lock: the scope is one `Message` row, keyed by the id
+ * the caller already resolved through {@link findOwnedCustomerMessage}. Uploads
+ * to different messages never contend. An advisory lock keyed the same way would
+ * also serialize, but it is anonymous in `pg_locks` and outlives the row it
+ * describes; the message row is the durable, self-describing lock.
+ *
+ * The id is interpolated as a bound parameter, never concatenated, and this
+ * function accepts no broader scope (a ticket, a workspace, or "any message") —
+ * the lock is always exactly the one already-authorized message.
+ *
+ * Lock order is uniform (this message row only, then attachment inserts against
+ * it), so no deadlock cycle can form between concurrent uploads.
+ */
+async function lockMessageForCustomerAttachment(
+  tx: AttachmentLockClient,
+  messageId: string,
+): Promise<void> {
+  const locked = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "Message" WHERE "id" = ${messageId}
+    FOR UPDATE
+  `;
+
+  // The row was resolved moments ago in this same request, so its absence means
+  // it was deleted in between. Nothing to attach to, and nothing to count.
+  if (locked.length !== 1 || locked[0]!.id !== messageId) {
+    throw new CustomerAttachmentNotFoundError();
+  }
+}
+
+/**
+ * Enforces the per-message attachment cap *while the message row is locked*.
+ *
+ * Splitting this out from {@link validateCustomerAttachment} is the point of the
+ * fix: it is a query against live database state, so it has to run inside the
+ * transaction that holds the lock and immediately before the insert it protects.
+ * A count taken outside the lock, or before a sibling writer acquired the lock,
+ * is a read of a stale snapshot.
+ *
+ * The comparison is `>=`, so reaching the limit is permitted and exceeding it is
+ * not — the same semantics the previous pre-transaction check used.
+ *
+ * Must be called inside the same transaction as {@link lockMessageForCustomerAttachment}
+ * and the attachment insert; committing in between would release the lock and
+ * reopen the race.
+ */
+async function assertAttachmentCapacityUnderLock(
+  tx: AttachmentLockClient,
+  messageId: string,
+): Promise<void> {
+  const count = await tx.attachment.count({ where: { messageId } });
+
+  if (count >= CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT) {
+    throw new CustomerAttachmentValidationError(
+      `A message can have at most ${CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT} attachments.`,
+    );
+  }
 }
 
 /**

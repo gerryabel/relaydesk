@@ -160,6 +160,24 @@ export function buildAttachmentContentDisposition(rawFilename: string | null | u
 }
 
 /**
+ * The neutral type substituted whenever a stored MIME type cannot be normalized.
+ *
+ * Lives here, next to {@link normalizeAttachmentMimeType}, rather than in the
+ * customer service: this module is pure and imports nothing, so both the
+ * server-only download path and the client-safe customer DTO can share one
+ * definition. Two copies of the same literal would eventually disagree.
+ *
+ * `application/octet-stream` is inert by construction — it is not in the
+ * attachment allowlist, browsers never render it inline, and it carries no
+ * parameters an attacker could have smuggled through a legacy row.
+ *
+ * The rule it exists to enforce: **a value that failed normalization must never
+ * be republished.** Falling back to the raw stored string re-introduces exactly
+ * what normalization rejected.
+ */
+export const ATTACHMENT_FALLBACK_MIME_TYPE = 'application/octet-stream';
+
+/**
  * Narrows a declared MIME type to its bare essence.
  *
  * `text/plain; charset=utf-8` and `TEXT/PLAIN` are the same type; comparing the

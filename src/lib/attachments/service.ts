@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { uploadAttachmentSchema } from './schema';
 import { attachmentConfig } from './config';
 import { getStorageProvider } from './local-storage';
-import { sanitizeAttachmentFilename } from './filename';
+import { normalizeAttachmentMimeType, sanitizeAttachmentFilename } from './filename';
 import type { StorageProvider } from './storage.interface';
 import type { UploadAttachmentInput } from './schema';
 import { TicketActivityType } from '@/generated/prisma';
@@ -85,7 +85,23 @@ export class AttachmentService {
       throw new AttachmentValidationError('Ukuran file melebihi batas maksimal');
     }
 
-    if (!attachmentConfig.allowedMimeTypes.includes(parsed.mimeType as (typeof attachmentConfig.allowedMimeTypes)[number])) {
+    // Normalize *before* the allowlist check, then validate and persist that same
+    // value (OMP remediation, Task 4 audit).
+    //
+    // The check used to run against the raw parsed string, so the value written
+    // to `mimeType` was whatever the client sent, verbatim. Anything that slipped
+    // past the exact-match allowlist — via a future loosening, or a row written
+    // by another code path — would be stored un-normalized and later republished
+    // into a `Content-Type` or `Content-Disposition` header by the download path.
+    //
+    // Normalizing first means the allowlist still decides exactly what is
+    // accepted (the set is unchanged and still exact-match: a type with
+    // parameters that disagree about its own base still yields `''` and is
+    // rejected), and the persisted value is the canonical bare type rather than
+    // a client-formatted one.
+    const mimeType = normalizeAttachmentMimeType(parsed.mimeType);
+
+    if (!mimeType || !attachmentConfig.allowedMimeTypes.includes(mimeType as (typeof attachmentConfig.allowedMimeTypes)[number])) {
       throw new AttachmentValidationError('Tipe file tidak diizinkan');
     }
 
@@ -128,7 +144,7 @@ export class AttachmentService {
           data: {
             messageId,
             originalFilename: safeFilename,
-            mimeType: parsed.mimeType,
+            mimeType,
             sizeBytes: parsed.sizeBytes,
             storageKey,
           },

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ticketPrioritySchema, ticketStatusSchema } from '@/lib/tickets/schema';
 import type { MessageAuthorType } from '@/lib/messages/authorship';
 import {
+  ATTACHMENT_FALLBACK_MIME_TYPE,
   normalizeAttachmentMimeType,
   sanitizeAttachmentFilename,
 } from '@/lib/attachments/filename';
@@ -193,7 +194,12 @@ export function toCustomerAttachmentView(input: {
   return {
     id: input.id,
     originalFilename: sanitizeAttachmentFilename(input.originalFilename),
-    mimeType: normalizeAttachmentMimeType(input.mimeType) || input.mimeType,
+    // Fail closed rather than echoing a stored value the normalizer rejects
+    // (OMP remediation, Task 4 audit). This value is a JSON field rather than a
+    // header, so it cannot inject one — but a legacy row holding
+    // `text/plain\r\nX-Injected: yes` should not be republished verbatim into a
+    // customer payload either. Same constant as the download path.
+    mimeType: normalizeAttachmentMimeType(input.mimeType) || ATTACHMENT_FALLBACK_MIME_TYPE,
     sizeBytes: input.sizeBytes,
     createdAt: input.createdAt.toISOString(),
   };

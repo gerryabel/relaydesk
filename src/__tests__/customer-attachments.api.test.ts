@@ -303,6 +303,69 @@ describe('POST .../messages/[messageId]/attachments', () => {
 });
 
 describe('GET /api/portal/[workspaceSlug]/attachments/[attachmentId]', () => {
+  describe('fails closed on a hostile stored MIME type (OMP remediation)', () => {
+    // The service is mocked here, so this suite cannot demonstrate the fix — it
+    // asserts the contract the route relies on: whatever the service hands over
+    // is written to `Content-Type` verbatim, so the service must never hand over
+    // something unsafe. If a future change reintroduces a fallback here, these
+    // fail.
+    //
+    // Asserting on the emitted header (not on "the request 500s") is deliberate:
+    // Node's `Headers` throws on CR/LF, so a vulnerable version would surface as
+    // an exception rather than a second header. That is an accident of this
+    // runtime, not a property of the code.
+    it.each([
+      'text/plain\r\nX-Injected: yes',
+      'text/plain\nSet-Cookie: a=b',
+      '\r\nContent-Type: text/html',
+    ] as const)('does not emit %j into any response header', async (hostile) => {
+      expect(hostile).toMatch(/[\r\n]/);
+      mockedDownload.mockResolvedValue({
+        buffer: pdfBytes,
+        filename: 'invoice.pdf',
+        // Simulates the post-fix service for a legacy row: already reduced to the
+        // inert fallback. The assertion that matters is structural — one value,
+        // no CRLF, no smuggled header name.
+        mimeType: 'application/octet-stream',
+        sizeBytes: pdfBytes.length,
+      });
+
+      const response = await downloadAttachment(downloadRequest(), downloadContext);
+
+      expect(response.status).toBe(200);
+
+      const contentType = response.headers.get('content-type') ?? '';
+
+      expect(contentType).not.toMatch(/[\r\n]/);
+      expect(contentType).not.toContain('X-Injected');
+      expect(contentType).not.toContain('Set-Cookie');
+      expect(contentType).toContain('application/octet-stream');
+
+      // No second header was smuggled in under any name the attacker chose.
+      // `Headers` iterates as `[name, value]` pairs, so this walks every header
+      // actually present on the response.
+      for (const [name, value] of response.headers) {
+        expect(`${name}: ${value}`).not.toMatch(/[\r\n]/);
+        expect(name.toLowerCase()).not.toBe('x-injected');
+      }
+    });
+
+    it('never reflects the hostile value into the response', async () => {
+      mockedDownload.mockResolvedValue({
+        buffer: pdfBytes,
+        filename: 'invoice.pdf',
+        mimeType: 'application/octet-stream',
+        sizeBytes: pdfBytes.length,
+      });
+
+      const response = await downloadAttachment(downloadRequest(), downloadContext);
+      const raw = [...response.headers].map(([n, v]) => `${n}: ${v}`).join('\n');
+
+      expect(raw).not.toContain('X-Injected');
+      expect(raw).not.toContain('Set-Cookie');
+    });
+  });
+
   it('returns the bytes with the stored type', async () => {
     const response = await downloadAttachment(downloadRequest(), downloadContext);
 

@@ -122,7 +122,16 @@ function validUpload(overrides: Partial<Parameters<typeof uploadCustomerAttachme
 /** The transaction client the service is handed. */
 function transactionTx() {
   return {
+    // The message row lock. Returns the locked row, as `SELECT ... FOR UPDATE`
+    // does; `lockedRowIds` overrides it in tests that need the row to be absent.
+    $queryRaw: vi.fn().mockImplementation(() => {
+      const rows = lockedRowIds.map((id) => ({ id }));
+      return Promise.resolve(rows);
+    }),
     attachment: {
+      // The count that guards the cap. Read *inside* the transaction, after the
+      // lock — that ordering is the fix, and it is asserted directly below.
+      count: attachmentCountInTransaction,
       create: vi.fn().mockResolvedValue({
         id: 'attachment-1',
         originalFilename: 'invoice.pdf',
@@ -134,6 +143,21 @@ function transactionTx() {
     ticketActivity: { create: vi.fn().mockResolvedValue({ id: 'activity-1' }) },
   };
 }
+
+/**
+ * Rows the fake `FOR UPDATE` reports as locked. Defaults to the authorized
+ * message so the happy path resolves a row, which is what a real database does.
+ */
+let lockedRowIds: string[] = [messageId];
+
+/**
+ * The in-transaction attachment count.
+ *
+ * Note this is *not* `prisma.attachment.count`: since the remediation the
+ * capacity check runs on the transaction client, under the lock. A test that
+ * stubbed the outer client would now silently pass while proving nothing.
+ */
+const attachmentCountInTransaction = vi.fn().mockResolvedValue(0);
 
 /**
  * A transaction client whose `attachment.create` echoes its input back with a
@@ -166,7 +190,12 @@ let tx: ReturnType<typeof echoTransactionTx>;
 beforeEach(() => {
   mockedRequireSession.mockResolvedValue(sessionFor() as never);
   prismaMocks.messageFindFirst.mockResolvedValue({ id: messageId, ticketId } as never);
-  prismaMocks.attachmentCount.mockResolvedValue(0);
+
+  // The count the capacity check reads now lives inside the transaction, so it
+  // is reset here rather than on `prismaMocks`.
+  attachmentCountInTransaction.mockReset();
+  attachmentCountInTransaction.mockResolvedValue(0);
+  lockedRowIds = [messageId];
 
   tx = echoTransactionTx();
 
@@ -394,13 +423,116 @@ describe('uploadCustomerAttachment — validation', () => {
   });
 
   it('rejects a file once the per-message limit is reached', async () => {
-    prismaMocks.attachmentCount.mockResolvedValue(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+    attachmentCountInTransaction.mockResolvedValue(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
 
     await expect(
       uploadCustomerAttachment(validUpload(), createMockStorage()),
     ).rejects.toBeInstanceOf(CustomerAttachmentValidationError);
 
-    expect(prismaMocks.transaction).not.toHaveBeenCalled();
+    // The rejection is a validation error, not flattened into a 500 — and it
+    // still keeps the customer-facing cap message.
+    await expect(
+      uploadCustomerAttachment(validUpload(), createMockStorage()),
+    ).rejects.toThrow(/at most/);
+
+    expect(tx.attachment.create).not.toHaveBeenCalled();
+  });
+
+  describe('caps attachments atomically under a row lock (OMP remediation)', () => {
+    it('locks the authorized message before counting', async () => {
+      await uploadCustomerAttachment(validUpload(), createMockStorage());
+
+      // Order is the whole fix: a count read before the lock is a stale read.
+      const order: string[] = [];
+
+      tx.$queryRaw.mockImplementation(() => {
+        order.push('lock');
+        return Promise.resolve([{ id: messageId }]);
+      });
+      attachmentCountInTransaction.mockImplementation(() => {
+        order.push('count');
+        return Promise.resolve(0);
+      });
+
+      await uploadCustomerAttachment(validUpload(), createMockStorage());
+
+      expect(order).toEqual(['lock', 'count']);
+    });
+
+    it('locks the row with FOR UPDATE, scoped to the authorized message id', async () => {
+      await uploadCustomerAttachment(validUpload(), createMockStorage());
+
+      const call = tx.$queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+
+      const sql = call[0].join('?').replace(/\s+/g, ' ').trim();
+
+      // A row lock, not a table lock and not a global/advisory lock: the fix is
+      // per-message, and unrelated messages must never contend.
+      expect(sql).toMatch(/FOR UPDATE/i);
+      expect(sql).not.toMatch(/FOR UPDATE (?:ALL|ANY)/i);
+      expect(sql).not.toMatch(/pg_advisory/i);
+      expect(sql).not.toMatch(/pg_try_advisory/i);
+      expect(sql).toMatch(/"Message"/);
+      expect(sql).not.toMatch(/UPDATE\s+"?Message"?\s+SET/i);
+
+      // The id is bound as a parameter, never concatenated into the statement.
+      expect(sql).toContain('WHERE "id" = ?');
+      expect(call.slice(1)).toEqual([messageId]);
+      expect(sql).not.toContain(messageId);
+    });
+
+    it('counts on the transaction client, never the outer one', async () => {
+      await uploadCustomerAttachment(validUpload(), createMockStorage());
+
+      expect(attachmentCountInTransaction).toHaveBeenCalledWith({
+        where: { messageId },
+      });
+
+      // A pre-transaction count is exactly the bug: two racers both read 9.
+      expect(prismaMocks.attachmentCount).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the locked message is already full, without inserting', async () => {
+      attachmentCountInTransaction.mockResolvedValue(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+
+      await expect(
+        uploadCustomerAttachment(validUpload(), createMockStorage()),
+      ).rejects.toBeInstanceOf(CustomerAttachmentValidationError);
+
+      // The lock was still taken: the cap is enforced against state that cannot
+      // change underneath the decision.
+      expect(tx.$queryRaw).toHaveBeenCalled();
+      expect(tx.attachment.create).not.toHaveBeenCalled();
+      expect(tx.ticketActivity.create).not.toHaveBeenCalled();
+    });
+
+    it('removes the stored object when the locked count rejects', async () => {
+      attachmentCountInTransaction.mockResolvedValue(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+
+      const storage = createMockStorage();
+
+      await expect(
+        uploadCustomerAttachment(validUpload(), storage),
+      ).rejects.toBeInstanceOf(CustomerAttachmentValidationError);
+
+      // Storage is written before the transaction, so a rejection found under the
+      // lock orphans a file. Cleanup has to happen on this path too, not only on
+      // an infrastructure failure.
+      expect(storage.put).toHaveBeenCalled();
+      expect(storage.delete).toHaveBeenCalled();
+    });
+
+    it('reports the message as gone when the locked row no longer exists', async () => {
+      lockedRowIds = [];
+
+      await expect(
+        uploadCustomerAttachment(validUpload(), createMockStorage()),
+      ).rejects.toBeInstanceOf(CustomerAttachmentNotFoundError);
+
+      // No point counting attachments on a row we do not hold.
+      expect(attachmentCountInTransaction).not.toHaveBeenCalled();
+      expect(tx.attachment.create).not.toHaveBeenCalled();
+    });
   });
 
   it('derives sizeBytes from the received bytes, not from anything declared', async () => {
@@ -717,6 +849,74 @@ describe('downloadCustomerAttachment', () => {
     );
 
     expect(result.mimeType).toBe('text/plain');
+  });
+
+  describe('fails closed when a stored MIME type cannot be normalized (OMP remediation)', () => {
+    // Each of these normalizes to `''`, because each is an attempt to smuggle a
+    // second HTTP header through the download response's `Content-Type`. They are
+    // exactly the shapes the old `|| attachment.mimeType` fallback would have
+    // republished verbatim.
+    //
+    // Node's `Headers` would throw a TypeError on these, so a test that only
+    // checked "the request 500s" would pass even with the vulnerable fallback —
+    // it would be asserting the runtime's accident rather than the control. The
+    // assertions below are on the value this function *returns*, before any
+    // `Response` is constructed, so they hold regardless of HTTP library.
+    const hostileMimeTypes = [
+      ['CRLF followed by a header line', 'text/plain\r\nX-Injected: yes'],
+      ['bare LF header split', 'text/plain\nSet-Cookie: a=b'],
+      ['only control characters', '\r\nContent-Type: text/html'],
+      ['embedded NUL', 'text/plain '],
+      ['header line with no leading type', '\r\nX-Forwarded-Host: attacker.example'],
+    ] as const;
+
+    it.each(hostileMimeTypes)('replaces a %s with the inert fallback', async (_label, stored) => {
+      prismaMocks.attachmentFindFirst.mockResolvedValue(
+        storedAttachment({ mimeType: stored }) as never,
+      );
+
+      const result = await downloadCustomerAttachment(
+        { workspaceSlug: workspace.slug, attachmentId: 'attachment-1' },
+        createMockStorage(),
+      );
+
+      expect(result.mimeType).toBe('application/octet-stream');
+    });
+
+    it.each(hostileMimeTypes)('never returns the hostile value for %s', async (_label, stored) => {
+      prismaMocks.attachmentFindFirst.mockResolvedValue(
+        storedAttachment({ mimeType: stored }) as never,
+      );
+
+      const result = await downloadCustomerAttachment(
+        { workspaceSlug: workspace.slug, attachmentId: 'attachment-1' },
+        createMockStorage(),
+      );
+
+      // Belt-and-braces: whatever the route does next, the CR/LF and header
+      // names must be gone, not merely relocated.
+      expect(result.mimeType).not.toContain('\r');
+      expect(result.mimeType).not.toContain('\n');
+      expect(result.mimeType).not.toContain('X-Injected');
+      expect(result.mimeType).not.toContain('Set-Cookie');
+      expect(result.mimeType).not.toContain('X-Forwarded-Host');
+    });
+
+    it('still delivers the bytes, so a legacy row does not break the customer', async () => {
+      prismaMocks.attachmentFindFirst.mockResolvedValue(
+        storedAttachment({ mimeType: 'text/plain\r\nX-Injected: yes' }) as never,
+      );
+
+      const storage = createMockStorage();
+      const result = await downloadCustomerAttachment(
+        { workspaceSlug: workspace.slug, attachmentId: 'attachment-1' },
+        storage,
+      );
+
+      // Fail-closed on the *type*, not on the whole download. Losing the
+      // attachment would be a worse outcome than an unhelpful content type.
+      expect(result.buffer.toString()).toBe('stored bytes');
+    });
   });
 
   it('reports a missing stored object as a failure, not as not-found', async () => {
