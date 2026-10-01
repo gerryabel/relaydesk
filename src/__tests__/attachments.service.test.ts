@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AttachmentService, MessageNotFoundError, AttachmentValidationError, StorageError, AttachmentNotFoundError } from '@/lib/attachments/service';
 import type { StorageProvider } from '@/lib/attachments/storage.interface';
 import { getCurrentMembership } from '@/lib/workspace/server';
+import { prisma } from '@/lib/db/prisma';
 
 vi.mock('@/lib/workspace/server', () => ({
   getCurrentMembership: vi.fn(),
@@ -43,18 +44,23 @@ let storage: StorageProvider;
 
 vi.mock('@/lib/db/prisma', () => {
   const attachment = {
-    create: vi.fn().mockResolvedValue({
-      id: 'attachment-1',
-      messageId: 'message-1',
-      originalFilename: 'test.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 1024,
-      createdAt: new Date(),
-    }),
+    create: vi.fn(),
     findMany: vi.fn().mockResolvedValue([]),
     findFirst: vi.fn().mockResolvedValue(null),
     delete: vi.fn().mockResolvedValue({}),
   };
+
+  // Echoes its input the way a real database does, so a test that asserts on a
+  // persisted value reads back what the service actually wrote rather than a
+  // canned row that would mask it.
+  attachment.create.mockImplementation(
+    ({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({
+        id: 'attachment-1',
+        createdAt: new Date(),
+        ...data,
+      }),
+  );
 
   const ticketActivity = {
     create: vi.fn().mockResolvedValue({}),
@@ -125,6 +131,96 @@ describe('AttachmentService.uploadAttachment', () => {
     await expect(
       service.uploadAttachment('message-1', { filename: 'test.exe', mimeType: 'application/x-executable', sizeBytes: 1024 }, Buffer.alloc(1)),
     ).rejects.toThrow(AttachmentValidationError);
+  });
+
+  describe('persists the normalized MIME type (OMP remediation)', () => {
+    // The internal writer is the other writer of `Attachment.mimeType`. It used
+    // to persist the raw parsed string, so anything that reached storage was
+    // whatever the client typed; a future loosening of the allowlist, or another
+    // code path, would store a value that later reached a `Content-Type` header
+    // unexamined.
+    async function storedMimeType(declaredMimeType: string) {
+      mockedGetCurrentMembership.mockResolvedValue(fakeMembership as never);
+
+      const service = new AttachmentService(storage);
+
+      const result = await service.uploadAttachment(
+        'message-1',
+        { filename: 'test.txt', mimeType: declaredMimeType, sizeBytes: 1024 },
+        Buffer.from('body'),
+      );
+
+      // Read what was written to the database, not just the returned DTO — the
+      // two agreeing is the point, and asserting only the return value could be
+      // satisfied by a sanitizing read path.
+      const createMock = prisma.attachment.create as unknown as {
+        mock: { calls: { data: Record<string, unknown> }[][] };
+      };
+
+      const written = createMock.mock.calls.at(-1)?.[0]?.data;
+
+      expect(written?.mimeType).toBe(result.mimeType);
+
+      return written?.mimeType as string;
+    }
+
+    it.each([
+      ['TEXT/PLAIN', 'text/plain'],
+      ['text/plain; charset=utf-8', 'text/plain'],
+      ['TEXT/PLAIN; charset=UTF-8', 'text/plain'],
+      ['  text/plain  ', 'text/plain'],
+      ['application/PDF', 'application/pdf'],
+    ])('stores %j as %j', async (declared, expected) => {
+      expect(await storedMimeType(declared)).toBe(expected);
+    });
+
+    it('does not widen the allowlist while normalizing', async () => {
+      // Normalization happens *before* the allowlist check, so the set of
+      // accepted types must be byte-identical to before. These are rejected for
+      // a reason unrelated to case or parameters.
+      for (const rejected of [
+        'application/x-executable',
+        'application/javascript',
+        'image/svg+xml',
+        'text/html',
+        'text;foo',
+        'application/octet-stream',
+      ]) {
+        mockedGetCurrentMembership.mockResolvedValue(fakeMembership as never);
+
+        const service = new AttachmentService(storage);
+
+        await expect(
+          service.uploadAttachment(
+            'message-1',
+            { filename: 'test.bin', mimeType: rejected, sizeBytes: 1024 },
+            Buffer.from('body'),
+          ),
+        ).rejects.toThrow(AttachmentValidationError);
+      }
+    });
+
+    it('never stores a value containing CRLF', async () => {
+      // The hostile shapes from the customer download path, asserted at the
+      // write so they never reach storage at all.
+      for (const hostile of [
+        'text/plain\r\nX-Injected: yes',
+        'text/plain\nSet-Cookie: a=b',
+        '\r\nContent-Type: text/html',
+      ]) {
+        mockedGetCurrentMembership.mockResolvedValue(fakeMembership as never);
+
+        const service = new AttachmentService(storage);
+
+        await expect(
+          service.uploadAttachment(
+            'message-1',
+            { filename: 'test.txt', mimeType: hostile, sizeBytes: 1024 },
+            Buffer.from('body'),
+          ),
+        ).rejects.toThrow(AttachmentValidationError);
+      }
+    });
   });
 
   it('throws MessageNotFoundError for nonexistent message', async () => {

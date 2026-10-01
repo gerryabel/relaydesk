@@ -401,6 +401,106 @@ describe('customer attachments against a real database', () => {
       expect(storage.objects.size).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
     });
 
+    /**
+     * Two uploads racing the last slot.
+     *
+     * Starts the message at 9 attachments (one below the limit of 10) and fires
+     * two concurrent uploads at it. Under the old pre-transaction count, both
+     * read 9, both saw room, and both committed — leaving 11.
+     *
+     * This needs a real database: the invariant is enforced by `SELECT ... FOR
+     * UPDATE` serializing the two transactions, which a mocked client cannot
+     * express. It is therefore one of the tests that cannot run without
+     * PostgreSQL.
+     */
+    it('never exceeds the limit when two uploads race for the last slot', async () => {
+      // 9 = one slot left.
+      for (let index = 0; index < CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT - 1; index += 1) {
+        await upload({ declaredFilename: `seed-${index}.pdf` });
+      }
+
+      const seeded = await prisma.attachment.count({
+        where: { messageId: customerMessageId },
+      });
+
+      expect(seeded).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT - 1);
+
+      // Started together, not awaited in sequence — a sequential pair could not
+      // interleave and would pass even without the lock.
+      const outcomes = await Promise.allSettled([
+        upload({ declaredFilename: 'racer-a.pdf' }),
+        upload({ declaredFilename: 'racer-b.pdf' }),
+      ]);
+
+      const succeeded = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+      const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+
+      // The invariant under test. Not "the loser's error message" — this count.
+      expect(succeeded).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+
+      const finalCount = await prisma.attachment.count({
+        where: { messageId: customerMessageId },
+      });
+
+      expect(finalCount).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+
+      // The loser's file was written before the transaction and then rejected
+      // under the lock, so it must not be left orphaned in storage.
+      expect(storage.objects.size).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+    });
+
+    it('serializes concurrent uploads to one message without exceeding the limit', async () => {
+      // More racers than remaining slots, all in flight at once.
+      for (let index = 0; index < CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT - 2; index += 1) {
+        await upload({ declaredFilename: `seed-${index}.pdf` });
+      }
+
+      const racers = 4;
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: racers }, (_unused, index) =>
+          upload({ declaredFilename: `burst-${index}.pdf` }),
+        ),
+      );
+
+      const succeeded = outcomes.filter((outcome) => outcome.status === 'fulfilled').length;
+
+      // Two slots, two winners — regardless of how the lock queue orders them.
+      expect(succeeded).toBe(2);
+      expect(
+        await prisma.attachment.count({ where: { messageId: customerMessageId } }),
+      ).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+    });
+
+    it('does not serialize uploads to different messages', async () => {
+      // Two messages, each with room. The lock is per message row, so neither
+      // upload should be blocked by the other — a global or ticket-scoped lock
+      // would couple them.
+      const secondMessage = await prisma.message.create({
+        data: {
+          ticketId,
+          authorType: 'customer',
+          customerId,
+          createdById: null,
+          body: 'second',
+        },
+        select: { id: true },
+      });
+
+      const outcomes = await Promise.allSettled([
+        upload({ declaredFilename: 'first.pdf' }),
+        upload({
+          messageId: secondMessage.id,
+          declaredFilename: 'second.pdf',
+        }),
+      ]);
+
+      expect(outcomes.every((outcome) => outcome.status === 'fulfilled')).toBe(true);
+      expect(
+        await prisma.attachment.count({ where: { messageId: secondMessage.id } }),
+      ).toBe(1);
+    });
+
     it('does not leave a stored object when the metadata write fails', async () => {
       const failures = vi
         .spyOn(prisma, '$transaction')
