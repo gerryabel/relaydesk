@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { ticketPrioritySchema, ticketStatusSchema } from '@/lib/tickets/schema';
 import type { MessageAuthorType } from '@/lib/messages/authorship';
+import {
+  normalizeAttachmentMimeType,
+  sanitizeAttachmentFilename,
+} from '@/lib/attachments/filename';
 import { formatTicketReference, toTicketReferenceCode } from './reference';
 
 /**
@@ -93,6 +97,14 @@ export function resolveCustomerTicketActions(status: CustomerTicketStatus): Cust
  */
 export type CustomerMessageAuthor = 'support' | 'customer' | 'system';
 
+export type CustomerAttachmentView = {
+  id: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
 export type CustomerMessageView = {
   /** Stable short reference. The raw message id is never serialized. */
   reference: string;
@@ -100,6 +112,8 @@ export type CustomerMessageView = {
   authorLabel: string;
   body: string;
   createdAt: string;
+  /** Always present, possibly empty: the portal never branches on `undefined`. */
+  attachments: CustomerAttachmentView[];
 };
 
 export type CustomerTicketDetail = {
@@ -155,15 +169,48 @@ export function resolveCustomerMessageAuthor(authorType: MessageAuthorType | str
  * Builds a customer-visible conversation entry.
  *
  * Accepts only the fields the portal is allowed to read, so a caller cannot
- * widen the projection by handing over a fuller row. `createdById` and
- * `customerId` are not accepted at all — authorship arrives as `authorType`,
- * which is the only field that decides what the customer sees.
+ * widen the projection by handing over a fuller row. `storageKey`, `messageId`,
+ * `createdById` and `customerId` are not accepted at all — there is no argument
+ * that could smuggle them into a response.
+ *
+ * The filename is re-sanitized here even though the upload path already did it.
+ * That is not redundancy for its own sake: attachments written through the
+ * *internal* route before Task 4 have whatever filename an agent's browser sent,
+ * and the ticket projection reads those same rows. Sanitizing on the read path
+ * means a pre-existing hostile name cannot be rendered into the conversation even
+ * though it would still be re-sanitized again by the download route.
+ *
+ * This module stays importable from client components: `sanitizeAttachmentFilename`
+ * is a pure string function with no Node or database imports.
  */
+export function toCustomerAttachmentView(input: {
+  id: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: Date;
+}): CustomerAttachmentView {
+  return {
+    id: input.id,
+    originalFilename: sanitizeAttachmentFilename(input.originalFilename),
+    mimeType: normalizeAttachmentMimeType(input.mimeType) || input.mimeType,
+    sizeBytes: input.sizeBytes,
+    createdAt: input.createdAt.toISOString(),
+  };
+}
+
 export function toCustomerMessageView(input: {
   id: string;
   authorType: MessageAuthorType | string;
   body: string;
   createdAt: Date;
+  attachments?: Array<{
+    id: string;
+    originalFilename: string;
+    mimeType: string;
+    sizeBytes: number;
+    createdAt: Date;
+  }>;
 }): CustomerMessageView {
   const author = resolveCustomerMessageAuthor(input.authorType);
 
@@ -173,6 +220,7 @@ export function toCustomerMessageView(input: {
     authorLabel: AUTHOR_LABELS[author],
     body: input.body,
     createdAt: input.createdAt.toISOString(),
+    attachments: (input.attachments ?? []).map((attachment) => toCustomerAttachmentView(attachment)),
   };
 }
 

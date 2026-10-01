@@ -77,6 +77,22 @@ export const createCustomerTicketSchema = z.strictObject({
 export const CUSTOMER_REPLY_BODY_MAX_LENGTH = 5000;
 
 /**
+ * Most attachments a single customer message may carry (Phase 9 Task 4).
+ *
+ * This lives here, beside the other customer-facing limits, rather than in
+ * `attachments.ts`. The reply form is a client component, and `attachments.ts`
+ * imports `node:crypto`, the Prisma client and the filesystem-backed storage
+ * provider — importing the number from there dragged the whole server module
+ * into the browser bundle and failed the build on `node:fs`. A constant that a
+ * client component needs must not live in a server-only module.
+ *
+ * The *enforcement* is still entirely server-side, in the service and the
+ * action; this is only the number, so the form can disable its own submit
+ * button early rather than discovering the limit from a round trip.
+ */
+export const CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT = 10;
+
+/**
  * The complete set of customer-controlled reply fields: exactly one.
  *
  * `strictObject` is what makes "a customer cannot change ticket status, cannot

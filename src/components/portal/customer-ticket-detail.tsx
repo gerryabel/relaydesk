@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge';
 import { CustomerReplyForm } from '@/components/portal/customer-reply-form';
+import { CustomerAttachmentList } from '@/components/portal/customer-attachment-list';
 import {
   customerPriorityLabel,
   customerStatusLabel,
@@ -9,7 +10,8 @@ import {
 import type { CustomerTicketDetail } from '@/lib/customer-portal/dto';
 
 /**
- * Customer ticket detail (Phase 9 Task 2; replies in Task 3).
+ * Customer ticket detail (Phase 9 Task 2; replies in Task 3; attachments in
+ * Task 4).
  *
  * Renders exactly what `CustomerTicketDetail` carries: identity, status,
  * priority, the customer's own description, the customer-visible conversation
@@ -122,6 +124,19 @@ export function CustomerTicketDetailView({
                 <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-100">
                   {message.body}
                 </p>
+
+                {/* Attachments render from the DTO the same service read for
+                    the message, so the list and the download endpoint are
+                    scoped by one predicate. `availableActions` gates replies,
+                    not attachments: an attachment that already exists is a
+                    permanent part of the record and stays readable after the
+                    ticket closes. */}
+                {message.attachments.length > 0 ? (
+                  <CustomerAttachmentList
+                    workspaceSlug={workspaceSlug}
+                    attachments={message.attachments}
+                  />
+                ) : null}
               </li>
             ))}
           </ol>

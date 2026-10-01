@@ -22,6 +22,7 @@ import {
   type CustomerTicketStatus,
 } from '@/lib/customer-portal/dto';
 import { assertMessageAuthor } from '@/lib/messages/authorship';
+import { CUSTOMER_VISIBLE_ATTACHMENT_AUTHOR_TYPES } from '@/lib/customer-portal/attachments';
 import { buildLastVisibleActivityMap } from '@/lib/customer-portal/activity';
 import { normalizeTicketPagination } from '@/lib/tickets/pagination';
 import {
@@ -183,9 +184,36 @@ export async function getCustomerTicket(input: GetCustomerTicketInput): Promise<
   // `authorType` replaces the Task 2 `createdById` inference: a customer
   // reply carries no workspace user, and classifying it from a null
   // `createdById` would have labelled it "System".
+  //
+  // Attachments come along in the same query (Task 4). Nesting them rather than
+  // looping keeps the read at one round trip regardless of conversation length —
+  // an `attachments` query per message would be N+1, and the per-message
+  // latency difference would leak how many attachments other customers' messages
+  // carry. `storageKey` is absent from the projection, so it cannot be
+  // serialized even by accident: the download endpoint is the only way to reach
+  // a file.
   const messages = await prisma.message.findMany({
     where: { ticketId: ticket.id },
-    select: { id: true, authorType: true, body: true, createdAt: true },
+    select: {
+      id: true,
+      authorType: true,
+      body: true,
+      createdAt: true,
+      attachments: {
+        // Restricted to the customer-visible author types, matching the
+        // download endpoint's own predicate. Filtering here means the portal
+        // never lists an attachment it would then refuse to serve.
+        where: { message: { authorType: { in: [...CUSTOMER_VISIBLE_ATTACHMENT_AUTHOR_TYPES] } } },
+        select: {
+          id: true,
+          originalFilename: true,
+          mimeType: true,
+          sizeBytes: true,
+          createdAt: true,
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      },
+    },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
 
@@ -323,6 +351,15 @@ export async function createCustomerTicket(input: {
 
 export type CreateCustomerReplyResult = {
   message: CustomerMessageView;
+  /**
+   * Raw message id of the reply just created.
+   *
+   * Internal plumbing only (Phase 9 Task 4): the server action uses it as the
+   * target for a follow-up attachment upload, so the id never has to reach the
+   * browser. The HTTP route serializes `message` alone, and the Task 3 invariant
+   * holds — a raw message id is never in a customer payload.
+   */
+  messageId: string;
 };
 
 /**
@@ -389,7 +426,7 @@ export async function createCustomerReply(input: {
     select: { id: true, authorType: true, body: true, createdAt: true },
   });
 
-  return { message: toCustomerMessageView(message) };
+  return { message: toCustomerMessageView(message), messageId: message.id };
 }
 
 /**

@@ -375,13 +375,117 @@ describe('getCustomerTicket', () => {
     // `authorType`, not `createdById`: a customer reply has no workspace user
     // at all, so classifying it from a null `createdById` would have labelled
     // every customer message "System".
-    expect(args?.select).toEqual({
+    expect(args?.select).toMatchObject({
       id: true,
       authorType: true,
       body: true,
       createdAt: true,
     });
     expect(args?.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+  });
+
+  it('reads attachments in the same query, never per message', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+
+    await getCustomerTicket({ workspaceSlug: workspace.slug, ticketId: 'ticket-1' });
+
+    const args = prismaMocks.messageFindMany.mock.calls[0]?.[0];
+
+    // Nested, not a second query per message: a per-message read would be N+1,
+    // and the extra round trips would leak conversation length and attachment
+    // counts through latency.
+    expect(args?.select?.attachments).toMatchObject({
+      select: {
+        id: true,
+        originalFilename: true,
+        mimeType: true,
+        sizeBytes: true,
+        createdAt: true,
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+
+    // The projection must never widen into storage metadata, whatever else is
+    // added to the column later.
+    expect(Object.keys(args?.select?.attachments?.select ?? {}).sort()).toEqual([
+      'createdAt',
+      'id',
+      'mimeType',
+      'originalFilename',
+      'sizeBytes',
+    ]);
+    expect(JSON.stringify(args?.select)).not.toContain('storageKey');
+    expect(JSON.stringify(args?.select)).not.toContain('messageId');
+  });
+
+  it('restricts listed attachments to the customer-visible author types', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+
+    await getCustomerTicket({ workspaceSlug: workspace.slug, ticketId: 'ticket-1' });
+
+    const where = prismaMocks.messageFindMany.mock.calls[0]?.[0]?.select?.attachments?.where;
+
+    // Same predicate the download endpoint enforces. If the two ever drift, the
+    // portal would list an attachment it then refuses to serve.
+    expect(where).toEqual({ message: { authorType: { in: ['agent', 'customer'] } } });
+  });
+
+  it('maps stored attachments without storage keys or message ids', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageFindMany.mockResolvedValue([
+      {
+        id: 'm1',
+        authorType: 'customer',
+        body: 'See attached.',
+        createdAt,
+        attachments: [
+          {
+            id: 'att-1',
+            originalFilename: 'invoice.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 2048,
+            createdAt,
+          },
+        ],
+      },
+    ] as never);
+
+    const ticket = await getCustomerTicket({ workspaceSlug: workspace.slug, ticketId: 'ticket-1' });
+
+    expect(ticket.conversation[0]?.attachments).toEqual([
+      {
+        id: 'att-1',
+        originalFilename: 'invoice.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 2048,
+        createdAt: createdAt.toISOString(),
+      },
+    ]);
+
+    // The whole customer payload, checked for every internal column this task
+    // could have widened it into.
+    for (const forbidden of [
+      'storageKey',
+      'workspaceId',
+      'customerId',
+      'createdById',
+      'authorType',
+      'actorId',
+    ]) {
+      expect(JSON.stringify(ticket)).not.toContain(forbidden);
+    }
+  });
+
+  it('reports a message with no attachments as an empty list', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+    prismaMocks.messageFindMany.mockResolvedValue([
+      { id: 'm1', authorType: 'agent', body: 'On it.', createdAt, attachments: [] },
+    ] as never);
+
+    const ticket = await getCustomerTicket({ workspaceSlug: workspace.slug, ticketId: 'ticket-1' });
+
+    // Always present, so the UI never branches on `undefined` vs `[]`.
+    expect(ticket.conversation[0]?.attachments).toEqual([]);
   });
 
   it('maps a conversation without member identity', async () => {
@@ -567,6 +671,20 @@ describe('createCustomerTicket', () => {
     expect(ticket.lastActivityAt).toBe(createdAt.toISOString());
     expect(ticket.conversation).toEqual([]);
     expect(ticket.availableActions).toEqual(['reply']);
+  });
+
+  it('returns a detail whose attachments are always an array', async () => {
+    prismaMocks.ticketFindFirst.mockResolvedValue(ticketRow() as never);
+
+    const { ticket } = await createCustomerTicket({
+      workspaceSlug: workspace.slug,
+      rawInput: { title: 'Offline' },
+    });
+
+    // A freshly created ticket has no conversation at all, which must be
+    // distinguishable from "a conversation with no attachments" only by length
+    // — never by a missing key.
+    expect(ticket.conversation).toEqual([]);
   });
 
   it('never contacts the database for an unauthenticated caller', async () => {
