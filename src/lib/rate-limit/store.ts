@@ -11,7 +11,7 @@ export interface RateLimitStore {
    * Increments the counter for `key` and returns the value *after* the
    * increment. Implementations must create the window key on first use.
    */
-  increment(key: string, windowSeconds: number): Promise<number>;
+  increment(key: string, windowSeconds: number): Promise<{ count: number; ttlSeconds: number }>;
 }
 
 type Window = { count: number; expiresAt: number };
@@ -32,11 +32,12 @@ export function createInMemoryRateLimitStore(now: () => number = Date.now): Rate
 
       if (!existing || existing.expiresAt <= currentTime) {
         windows.set(key, { count: 1, expiresAt: currentTime + windowSeconds * 1000 });
-        return 1;
+        return { count: 1, ttlSeconds: windowSeconds };
       }
 
       existing.count += 1;
-      return existing.count;
+      const ttlSeconds = Math.max(0, Math.ceil((existing.expiresAt - currentTime) / 1000));
+      return { count: existing.count, ttlSeconds };
     },
   };
 }

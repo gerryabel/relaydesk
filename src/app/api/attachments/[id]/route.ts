@@ -22,6 +22,7 @@ export async function GET(
         // verbatim, and a `'` or a `\` survived it. Task 4 shares one builder
         // with the customer route so both paths are covered by the same tests.
         'Content-Disposition': buildAttachmentContentDisposition(result.originalFilename),
+        'Content-Length': String(result.buffer.length),
         'X-Content-Type-Options': 'nosniff',
         'Cache-Control': 'private, no-cache',
       },

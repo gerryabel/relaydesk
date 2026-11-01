@@ -269,7 +269,10 @@ describe('customer rate limit policy', () => {
   it('reads the first forwarded address and falls back sensibly', () => {
     expect(readClientIp(new Headers({ 'x-forwarded-for': '203.0.113.7, 70.41.3.18' }))).toBe('203.0.113.7');
     expect(readClientIp(new Headers({ 'x-real-ip': '198.51.100.4' }))).toBe('198.51.100.4');
-    expect(readClientIp(new Headers())).toBe('unknown');
+    // When no IP header is present, the fallback includes User-Agent entropy
+    // so a single attacker cannot exhaust one shared bucket for all clients
+    // behind a stripping proxy.
+    expect(readClientIp(new Headers({ 'user-agent': 'test-agent' }))).toMatch(/^unknown:[0-9a-f]{16}$/);
   });
 });
 
@@ -305,9 +308,9 @@ describe('rate limit consumption', () => {
       counts,
       store: {
         increment: async (key: string, windowSeconds: number) => {
-          const count = await store.increment(key, windowSeconds);
+          const result = await store.increment(key, windowSeconds);
           counts.push(key);
-          return count;
+          return result;
         },
       },
     };
@@ -409,35 +412,136 @@ describe('rate limit consumption', () => {
     let now = 0;
     const store = createInMemoryRateLimitStore(() => now);
 
-    expect(await store.increment('w:1', 60)).toBe(1);
+    expect((await store.increment('w:1', 60)).count).toBe(1);
     now = 59_000;
-    expect(await store.increment('w:1', 60)).toBe(2);
+    expect((await store.increment('w:1', 60)).count).toBe(2);
     now = 60_001;
-    expect(await store.increment('w:1', 60)).toBe(1);
+    expect((await store.increment('w:1', 60)).count).toBe(1);
   });
 
   it('sets the redis ttl only on the first increment of a window', async () => {
-    const expire = vi.fn().mockResolvedValue(1);
-    let counter = 0;
-    const store = createRedisRateLimitStore({
-      incr: vi.fn(async () => ++counter),
-      expire,
+    const execute = vi.fn(async (_script: string, keys: string[], args: (string | number)[]) => {
+      const key = keys[0]!;
+      const staticStore = new Map<string, { count: number; pttl: number }>();
+      let record = staticStore.get(key);
+      if (!record) {
+        record = { count: 0, pttl: Number(args[0]!) * 1000 };
+        staticStore.set(key, record);
+      }
+      record.count += 1;
+      if (record.count === 1) {
+        record.pttl = Number(args[0]!) * 1000;
+      }
+      return [record.count, record.pttl] as [number, number];
     });
 
+    const store = createRedisRateLimitStore({ execute });
+
     await store.increment('k', 60);
     await store.increment('k', 60);
     await store.increment('k', 60);
 
-    expect(expire).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(3);
+    // The Lua script internally handles EXPIRE; we verify via the returned PTTL.
+    const lastResult = (execute.mock.calls[2]![1] as string[])[0]!;
+    expect(lastResult).toBe('relaydesk:ratelimit:k');
   });
 
   it('rejects a non-numeric redis counter instead of trusting it', async () => {
     const store = createRedisRateLimitStore({
-      incr: vi.fn(async () => Number.NaN),
-      expire: vi.fn(),
+      execute: vi.fn(async () => [Number.NaN, 60_000] as [number, number]),
     });
 
     await expect(store.increment('k', 60)).rejects.toThrow('Rate limit counter is not numeric');
+  });
+
+  it('repairs a legacy key that has no TTL by applying the configured window', async () => {
+    const store = createRedisRateLimitStore({
+      execute: vi.fn(async () => [2, -1] as [number, number]),
+    });
+
+    const result = await store.increment('k', 120);
+
+    expect(result.count).toBe(2);
+    // -1 PTTL is treated as missing expiry; we return the configured window.
+    expect(result.ttlSeconds).toBe(120);
+  });
+
+  it('rounds up PTTL to whole seconds for retry-after', async () => {
+    const store = createRedisRateLimitStore({
+      execute: vi.fn(async () => [1, 1500] as [number, number]),
+    });
+
+    const result = await store.increment('k', 60);
+
+    expect(result.count).toBe(1);
+    expect(result.ttlSeconds).toBe(2);
+  });
+
+  it('uses actual remaining TTL for retry-after, not the configured window', async () => {
+    let now = 0;
+    const store = createInMemoryRateLimitStore(() => now);
+    const rules = [
+      { action: 'short', dimensions: ['k'], limit: 1, windowSeconds: 60 },
+    ];
+
+    await consumeRateLimit(rules, store);
+    now = 30_000;
+    const verdict = await consumeRateLimit(rules, store);
+
+    expect(verdict.allowed).toBe(false);
+    // 30 seconds have elapsed of a 60-second window, so retry-after should be ~30.
+    expect(verdict.retryAfterSeconds).toBeGreaterThanOrEqual(25);
+    expect(verdict.retryAfterSeconds).toBeLessThanOrEqual(35);
+  });
+
+  it('reports the tightest remaining TTL when several rules reject', async () => {
+    let now = 0;
+    const store = createInMemoryRateLimitStore(() => now);
+    const rules = [
+      { action: 'long', dimensions: ['k'], limit: 1, windowSeconds: 600 },
+      { action: 'short', dimensions: ['k'], limit: 1, windowSeconds: 60 },
+    ];
+
+    await consumeRateLimit(rules, store);
+    now = 30_000;
+    const verdict = await consumeRateLimit(rules, store);
+
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.retryAfterSeconds).toBeGreaterThanOrEqual(25);
+    expect(verdict.retryAfterSeconds).toBeLessThanOrEqual(35);
+  });
+
+  it('degrades to in-memory store after a Redis failure in the wrapper', async () => {
+    // The store itself throws when Redis is unreachable; the caller is
+    // responsible for catching and falling back (the default wrapper does
+    // this automatically).
+    const failingStore = createRedisRateLimitStore({
+      execute: vi.fn(async () => {
+        throw new Error('Redis connection lost');
+      }),
+    });
+
+    await expect(failingStore.increment('k', 60)).rejects.toThrow('Redis connection lost');
+  });
+
+  it('recovers when a previously-failing Redis client becomes healthy', async () => {
+    let healthy = false;
+    const store = createRedisRateLimitStore({
+      execute: vi.fn(async () => {
+        if (!healthy) {
+          throw new Error('Redis connection lost');
+        }
+        return [7, 42_000] as [number, number];
+      }),
+    });
+
+    await expect(store.increment('k', 60)).rejects.toThrow('Redis connection lost');
+    healthy = true;
+
+    const result = await store.increment('k', 60);
+    expect(result.count).toBe(7);
+    expect(result.ttlSeconds).toBe(42);
   });
 });
 

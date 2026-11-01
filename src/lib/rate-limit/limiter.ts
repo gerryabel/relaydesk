@@ -71,13 +71,13 @@ export async function consumeRateLimit(
   let rejection: RateLimitVerdict | null = null;
 
   for (const rule of rules) {
-    const count = await activeStore.increment(buildRateLimitKey(rule), rule.windowSeconds);
+    const { count, ttlSeconds } = await activeStore.increment(buildRateLimitKey(rule), rule.windowSeconds);
 
-    if (count > rule.limit && (rejection === null || rule.windowSeconds < rejection.retryAfterSeconds)) {
+    if (count > rule.limit && (rejection === null || ttlSeconds < rejection.retryAfterSeconds)) {
       rejection = {
         allowed: false,
         limitedBy: rule,
-        retryAfterSeconds: rule.windowSeconds,
+        retryAfterSeconds: ttlSeconds,
       };
     }
   }

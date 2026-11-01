@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { uploadAttachmentSchema } from './schema';
 import { attachmentConfig } from './config';
 import { getStorageProvider } from './local-storage';
-import { normalizeAttachmentMimeType, sanitizeAttachmentFilename } from './filename';
+import {
+  ATTACHMENT_FALLBACK_MIME_TYPE,
+  normalizeAttachmentMimeType,
+  sanitizeAttachmentFilename,
+} from './filename';
 import type { StorageProvider } from './storage.interface';
 import type { UploadAttachmentInput } from './schema';
 import { TicketActivityType } from '@/generated/prisma';
@@ -267,8 +271,12 @@ export class AttachmentService {
 
     return {
       buffer,
-      originalFilename: attachment.originalFilename,
-      mimeType: attachment.mimeType,
+      // Sanitize on the way out so a legacy row written before Task 4 cannot
+      // inject a hostile filename into a response header or UI.
+      originalFilename: sanitizeAttachmentFilename(attachment.originalFilename),
+      // Fail closed: a stored value the normalizer rejects must never be
+      // republished into a Content-Type header.
+      mimeType: normalizeAttachmentMimeType(attachment.mimeType) || ATTACHMENT_FALLBACK_MIME_TYPE,
     };
   }
 

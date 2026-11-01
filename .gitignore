@@ -50,3 +50,4 @@ CLAUDE.md
 skills-lock.json
 
 /src/generated/prisma
+storage/

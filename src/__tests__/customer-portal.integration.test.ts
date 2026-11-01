@@ -429,7 +429,7 @@ describe('customer portal tickets against a real database', () => {
     });
 
     await prisma.internalNote.create({
-      data: { ticketId: ticket.id, authorId: createId('user'), body: 'INTERNAL: looks like a scam' },
+      data: { ticketId: ticket.id, authorId: await seedAgentUser(), body: 'INTERNAL: looks like a scam' },
     });
 
     const detail = await getCustomerTicket({ workspaceSlug, ticketId: ticket.id });

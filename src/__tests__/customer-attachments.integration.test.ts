@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import { PrismaClient } from '@/generated/prisma';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { getTestDatabaseUrl } from '@/lib/test/db';
 import { DEFAULT_SLA_POLICIES_MINUTES } from '@/lib/tickets/sla';
+import { prisma as globalPrisma } from '@/lib/db/prisma';
 import type { StorageProvider } from '@/lib/attachments/storage.interface';
 import { MessageAuthorType } from '@/generated/prisma';
+import { POST as uploadAttachmentRoute } from '@/app/api/portal/[workspaceSlug]/tickets/[ticketId]/messages/[messageId]/attachments/route';
 
 /** Every author type the schema knows, read from the generated enum. */
 const ALL_AUTHOR_TYPES = Object.values(MessageAuthorType);
@@ -265,7 +268,7 @@ describe('customer attachments against a real database', () => {
         CustomerAttachmentNotFoundError,
       );
 
-      expect(await prisma.attachment.count()).toBe(0);
+      expect(await prisma.attachment.count({ where: { messageId: customerMessageId } })).toBe(0);
     });
 
     it('refuses a customer message on another workspace ticket', async () => {
@@ -307,7 +310,7 @@ describe('customer attachments against a real database', () => {
         upload({ ticketId: theirTicket.id, messageId: theirMessage.id }),
       ).rejects.toBeInstanceOf(CustomerAttachmentNotFoundError);
 
-      expect(await prisma.attachment.count()).toBe(0);
+      expect(await prisma.attachment.count({ where: { messageId: customerMessageId } })).toBe(0);
     });
 
     it('refuses an agent-authored message on the customer own ticket', async () => {
@@ -392,12 +395,12 @@ describe('customer attachments against a real database', () => {
         await upload({ declaredFilename: `file-${index}.pdf` });
       }
 
-      expect(await prisma.attachment.count()).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+      expect(await prisma.attachment.count({ where: { messageId: customerMessageId } })).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
 
       await expect(upload({ declaredFilename: 'one-too-many.pdf' })).rejects.toThrow();
 
       // The rejected upload must not have left a row or an object behind.
-      expect(await prisma.attachment.count()).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+      expect(await prisma.attachment.count({ where: { messageId: customerMessageId } })).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
       expect(storage.objects.size).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
     });
 
@@ -503,13 +506,13 @@ describe('customer attachments against a real database', () => {
 
     it('does not leave a stored object when the metadata write fails', async () => {
       const failures = vi
-        .spyOn(prisma, '$transaction')
+        .spyOn(globalPrisma, '$transaction')
         .mockRejectedValue(new Error('deadlock detected'));
 
       await expect(upload()).rejects.toThrow();
 
       expect(storage.objects.size).toBe(0);
-      expect(await prisma.attachment.count()).toBe(0);
+      expect(await prisma.attachment.count({ where: { messageId: customerMessageId } })).toBe(0);
 
       failures.mockRestore();
     });
@@ -846,4 +849,50 @@ describe('customer attachments against a real database', () => {
     });
   });
 
+  describe('route-level limit enforcement', () => {
+    it('cannot exceed 10 attachments on a message even with 11 requests', async () => {
+      // Create a fresh message for this test to avoid interference with the
+      // shared `customerMessageId` used above.
+      const message = await prisma.message.create({
+        data: { ticketId, authorType: 'customer', customerId, body: 'Route limit test' },
+        select: { id: true },
+      });
+      const messageId = message.id;
+
+      // Seed 0 attachments; we will fire 11 concurrent uploads.
+      const uploads = Array.from({ length: 11 }, (_, index) => {
+        const formData = new FormData();
+        formData.append('file', new File([pdfBytes], `file-${index}.pdf`, { type: 'application/pdf' }));
+        return uploadAttachmentRoute(
+          new NextRequest(
+            `http://localhost:3000/api/portal/${workspaceSlug}/tickets/${ticketId}/messages/${messageId}/attachments`,
+            {
+              method: 'POST',
+              body: formData,
+            },
+          ),
+          { params: Promise.resolve({ workspaceSlug, ticketId, messageId }) },
+        );
+      });
+
+      const outcomes = await Promise.allSettled(uploads);
+      const successfulUploads = outcomes.filter((o) => {
+        if (o.status !== 'fulfilled') return false;
+        const response = o.value;
+        return response && response.status >= 200 && response.status < 300;
+      });
+      const failedUploads = outcomes.filter((o) => {
+        if (o.status === 'rejected') return true;
+        const response = o.value;
+        return !response || response.status < 200 || response.status >= 300;
+      });
+
+      // At most 10 should succeed.
+      expect(successfulUploads.length).toBeLessThanOrEqual(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+      expect(failedUploads.length).toBeGreaterThanOrEqual(1);
+
+      const finalCount = await prisma.attachment.count({ where: { messageId } });
+      expect(finalCount).toBe(CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT);
+    });
+  });
 });

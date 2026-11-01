@@ -45,6 +45,14 @@ export function hashRateLimitDimension(value: string): string {
  * rate-limit buckets always combine this value with workspace and email
  * dimensions — a spoofed header alone cannot bypass the limits. The value is
  * hashed before it becomes a key, and is never persisted or logged.
+ *
+ * When no IP header is present (R-4), the fallback includes a truncated
+ * SHA-256 hash of the `User-Agent`. This is NOT a unique client identifier:
+ * many users share the same User-Agent, and it can be changed or spoofed
+ * trivially. It exists solely to add entropy so a single attacker cannot
+ * exhaust one shared bucket for all clients whose IP headers were stripped by
+ * a trusted proxy. Workspace-email and workspace-level limits remain the
+ * primary abuse protections.
  */
 export function readClientIp(headers: Headers): string {
   const forwarded = headers.get('x-forwarded-for');
@@ -54,7 +62,18 @@ export function readClientIp(headers: Headers): string {
     return first.slice(0, 64);
   }
 
-  return headers.get('x-real-ip')?.slice(0, 64) ?? 'unknown';
+  const xRealIp = headers.get('x-real-ip')?.slice(0, 64);
+  if (xRealIp) {
+    return xRealIp;
+  }
+
+  // Fallback: include User-Agent entropy so a single attacker cannot exhaust
+  // one shared bucket for every client whose IP headers were stripped by a
+  // trusted proxy. We do not trust arbitrary forwarded headers; this only
+  // applies when no IP header was present at all.
+  const userAgent = headers.get('user-agent') ?? '';
+  const entropy = hashRateLimitDimension(userAgent).slice(0, 16);
+  return `unknown:${entropy}`;
 }
 
 /**

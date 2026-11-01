@@ -14,45 +14,17 @@ import { Textarea } from '@/components/ui/textarea';
 import { CustomerAttachmentList, type CustomerAttachmentItem } from '@/components/portal/customer-attachment-list';
 
 /**
- * Customer reply form with attachments (Phase 9 Task 3; attachments in Task 4).
+ * Customer reply form with attachments.
  *
- * One field, `body`, because that is the only thing a customer controls about
- * their own words. The action's schema is strict, so anything else this
- * component tried to send — a status, a customer id, an author — would be
- * rejected server-side rather than honoured.
+ * Upload flow (Phase 9 Task 5 transport hardening):
  *
- * How a reply and its files are written (Phase 9 Task 4):
+ *  1. Submit the reply text through the Server Action.
+ *  2. On success, upload each selected file directly to the authenticated
+ *     attachment API in individual bounded requests.
+ *  3. Report per-file failures after all uploads complete.
  *
- * ```text
- * 1. customer submits the reply
- * 2. the reply is stored, and is the customer-authored message
- * 3. each selected file is attached to that message
- * 4. the conversation re-renders with what actually landed
- * ```
- *
- * The order is chosen, not incidental. The reply is the record of what the
- * customer said and it is what they would be upset to lose, so it is committed
- * first; a file that cannot be stored is reported individually instead of
- * rolling the whole submission back. Doing the upload through the server action
- * rather than from the browser is what keeps the raw message id out of the
- * payload — the portal never exposes it (Task 3), and completing a round trip
- * from the client would have required it.
- *
- * Failure handling:
- *
- *  - A failed *reply* keeps the text and the selected files, because neither was
- *    accepted by the server. Losing a paragraph and an attachment to a transient
- *    error is what makes people stop replying.
- *  - A partially failed *upload* clears the form, because the reply was sent,
- *    and lists the files that did not land. Suppressing that would report
- *    "sent" for something that was not stored, and Task 4 has no customer delete
- *    path to fall back on.
- *  - Server messages are rendered verbatim; the action has already replaced
- *    anything internal with a fixed sentence before returning.
- *
- * The client-side size check is a courtesy — it saves a pointless round trip and
- * a confusing error — not a control. The server derives `sizeBytes` from the
- * received bytes and enforces the same limit.
+ * Splitting the flow avoids embedding large files inside a Server Action
+ * request, which Next.js caps at 1 MB by default.
  */
 export function CustomerReplyForm({
   workspaceSlug,
@@ -69,6 +41,7 @@ export function CustomerReplyForm({
   >(null);
   const [pending, setPending] = useState(false);
   const [selected, setSelected] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   /** Largest number the server will accept, for the file input's own cap. */
   const maxFiles = CUSTOMER_ATTACHMENTS_PER_MESSAGE_LIMIT;
@@ -107,40 +80,91 @@ export function CustomerReplyForm({
     }
   }
 
+  async function uploadFile(
+    workspaceSlug: string,
+    ticketId: string,
+    messageId: string,
+    file: File,
+  ): Promise<{ filename: string; reason?: string }> {
+    const form = new FormData();
+    form.append('file', file);
+
+    const response = await fetch(
+      `/api/portal/${encodeURIComponent(workspaceSlug)}/tickets/${encodeURIComponent(ticketId)}/messages/${encodeURIComponent(messageId)}/attachments`,
+      { method: 'POST', body: form },
+    );
+
+    if (response.ok) {
+      return { filename: file.name };
+    }
+
+    let reason = 'Upload failed.';
+    try {
+      const body = (await response.json()) as { error?: string };
+      if (body.error) {
+        reason = body.error;
+      }
+    } catch {
+      // keep generic reason
+    }
+
+    return { filename: file.name, reason };
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError(null);
+    setFailedFiles(null);
 
-    // Captured before the await: `event.currentTarget` is not guaranteed to
-    // still be the form once the action resolves.
     const form = event.currentTarget;
     const body = (new FormData(form).get('body') as string | null)?.trim() ?? '';
 
-    const result = await createCustomerReplyWithAttachmentsAction(
+    // Step 1: create the reply via Server Action.
+    const actionResult = await createCustomerReplyWithAttachmentsAction(
       workspaceSlug,
       ticketId,
       { body },
-      selected,
     );
 
-    if ('error' in result) {
-      // Nothing was stored, so the text and the selection both survive.
-      setError(result.error);
+    if ('error' in actionResult) {
+      setError(actionResult.error);
       setPending(false);
       return;
+    }
+
+    // Step 2: upload each file directly to the authenticated attachment API.
+    setUploading(true);
+    const failed: Array<{ filename: string; reason: string }> = [];
+
+    for (const file of selected) {
+      const result = await uploadFile(
+        workspaceSlug,
+        ticketId,
+        actionResult.messageId,
+        file,
+      );
+
+      if (result.reason) {
+        failed.push({ filename: result.filename, reason: result.reason });
+      }
     }
 
     form.reset();
     setSelected([]);
     resetFileInput();
-    setFailedFiles(result.failed.length > 0 ? result.failed : null);
     setPending(false);
+    setUploading(false);
+
+    if (failed.length > 0) {
+      setFailedFiles(failed);
+    }
+
     router.refresh();
   }
 
   return (
-    <form onSubmit={handleSubmit} aria-busy={pending} className="flex flex-col gap-3">
+    <form onSubmit={handleSubmit} aria-busy={pending || uploading} className="flex flex-col gap-3">
       {error ? (
         <p
           role="alert"
@@ -158,7 +182,6 @@ export function CustomerReplyForm({
           <p>Your reply was sent, but some files were not attached:</p>
           <ul className="mt-1 list-disc pl-5">
             {failedFiles.map((file, index) => (
-              // Indexed too: two files can fail under the same name.
               <li key={`${index}-${file.filename}`}>
                 {file.filename} — {file.reason}
               </li>
@@ -190,7 +213,7 @@ export function CustomerReplyForm({
           id="customer-reply-files"
           type="file"
           multiple
-          disabled={pending}
+          disabled={pending || uploading}
           onChange={handleFileChange}
           aria-describedby="customer-reply-files-help"
           className="text-sm text-neutral-700 file:mr-3 file:rounded-md file:border file:border-neutral-300 file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-neutral-700 dark:text-neutral-200 dark:file:border-neutral-700 dark:file:bg-neutral-900 dark:file:text-neutral-200"
@@ -206,21 +229,19 @@ export function CustomerReplyForm({
         {selected.length > 0 ? (
           <CustomerAttachmentList
             attachments={selected.map<CustomerAttachmentItem>((file, index) => ({
-              // Indexed rather than the bare name: selecting `notes.txt` twice
-              // would otherwise produce duplicate React keys.
               id: `${index}-${file.name}`,
               originalFilename: file.name,
               mimeType: file.type || 'application/octet-stream',
               sizeBytes: file.size,
-              state: 'pending',
+              state: uploading ? 'pending' : 'pending',
             }))}
           />
         ) : null}
       </div>
 
       <div>
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Sending reply...' : 'Send reply'}
+        <Button type="submit" disabled={pending || uploading}>
+          {pending || uploading ? 'Sending reply...' : 'Send reply'}
         </Button>
       </div>
     </form>

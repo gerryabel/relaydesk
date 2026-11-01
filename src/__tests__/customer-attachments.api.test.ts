@@ -206,6 +206,60 @@ describe('POST .../messages/[messageId]/attachments', () => {
     expect(response.status).toBe(400);
   });
 
+  it('rejects an upload whose Content-Length exceeds the configured maximum', async () => {
+    const oversized = Buffer.alloc(attachmentConfig.maxFileSizeBytes + 1024 * 1024 + 1, 'A');
+    const response = await uploadAttachment(
+      uploadRequest(new File([oversized], 'huge.pdf', { type: 'application/pdf' })),
+      uploadContext,
+    );
+
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/too large/i);
+  });
+
+  it('rejects an upload whose parsed file size exceeds the configured maximum', async () => {
+    // When Content-Length is absent or below the threshold, the route falls
+    // back to the parsed `file.size` from the multipart part.
+    const oversized = Buffer.alloc(attachmentConfig.maxFileSizeBytes + 1, 'A');
+    const response = await uploadAttachment(
+      uploadRequest(new File([oversized], 'huge.pdf', { type: 'application/pdf' })),
+      uploadContext,
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/MB limit/);
+  });
+
+  it('rejects an oversized request before calling the storage service', async () => {
+    const oversized = Buffer.alloc(attachmentConfig.maxFileSizeBytes + 1024 * 1024 + 1, 'A');
+    const response = await uploadAttachment(
+      uploadRequest(new File([oversized], 'huge.pdf', { type: 'application/pdf' })),
+      uploadContext,
+    );
+
+    expect(response.status).toBe(413);
+    expect(mockedUpload).not.toHaveBeenCalled();
+  });
+
+  it('accepts a file whose size is exactly at the per-file maximum', async () => {
+    const exactMax = Buffer.alloc(attachmentConfig.maxFileSizeBytes, 'A');
+    mockedUpload.mockResolvedValue({
+      ...storedAttachment,
+      originalFilename: 'max.pdf',
+      sizeBytes: exactMax.length,
+    });
+
+    const response = await uploadAttachment(
+      uploadRequest(new File([exactMax], 'max.pdf', { type: 'application/pdf' })),
+      uploadContext,
+    );
+
+    expect(response.status).toBe(201);
+    expect(mockedUpload).toHaveBeenCalledTimes(1);
+  });
+
   it('answers 500 for a storage failure without echoing its cause', async () => {
     mockedUpload.mockRejectedValue(
       new CustomerAttachmentStorageError(
@@ -588,5 +642,40 @@ describe('GET /api/portal/[workspaceSlug]/attachments/[attachmentId]', () => {
     expect(attachmentConfig.allowedMimeTypes).not.toContain('text/html');
     expect(attachmentConfig.allowedMimeTypes).not.toContain('image/svg+xml');
     expect(attachmentConfig.allowedMimeTypes).not.toContain('application/javascript');
+  });
+
+  it('cancels the stream reader when the body limit is exceeded', async () => {
+    const cancelCalls: number[] = [];
+    const oversized = new Uint8Array(attachmentConfig.maxFileSizeBytes + 1024 * 1024 + 1);
+    const reader = {
+      _done: false,
+      read: async (): Promise<{ done: boolean; value: Uint8Array }> => {
+        if (!reader._done) {
+          reader._done = true;
+          return { done: false, value: oversized };
+        }
+        return { done: true, value: new Uint8Array(0) };
+      },
+      cancel: async () => {
+        cancelCalls.push(1);
+      },
+    };
+
+    const request = new NextRequest(
+      `http://localhost:3000/api/portal/${slug}/tickets/${ticketId}/messages/${messageId}/attachments`,
+      { method: 'POST', body: new FormData() },
+    );
+
+    // Override the read-only `body` getter to inject our mock reader.
+    Object.defineProperty(request, 'body', {
+      get: () => ({
+        getReader: () => reader,
+      }),
+    });
+
+    const response = await uploadAttachment(request, uploadContext);
+
+    expect(response.status).toBe(413);
+    expect(cancelCalls).toHaveLength(1);
   });
 });
