@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   quality:
@@ -27,3 +28,32 @@ jobs:
           BETTER_AUTH_SECRET: ci-test-secret-at-least-32-characters-long
           BETTER_AUTH_URL: http://localhost:3000
           REDIS_URL: redis://localhost:6379
+
+  redis-integration:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://localhost:5432/relaydesk
+      - name: Run real Redis integration tests
+        run: npx vitest run src/__tests__/rate-limit.redis.real.test.ts
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
