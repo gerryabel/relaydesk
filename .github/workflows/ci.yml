@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, phase-9/task-5-integration-hardening]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -58,3 +58,8 @@ jobs:
         run: npx vitest run src/__tests__/rate-limit.redis.real.test.ts
         env:
           REDIS_URL: redis://127.0.0.1:6379
+      - name: Strict customer attachment upload lifecycle
+        run: npx vitest run src/__tests__/customer-attachments.api.test.ts
+        env:
+          NODE_OPTIONS: --unhandled-rejections=strict
+          RELAYDESK_SUPPRESS_STREAM_REJECTIONS: ""

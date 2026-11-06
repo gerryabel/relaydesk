@@ -68,7 +68,7 @@ describe('email worker integration', () => {
     const result = await processOutboxJob({ id: 'job-1', data: validJobPayload });
 
     expect(result.handled).toBe(true);
-    expect(handler).toHaveBeenCalledWith(emailEvent);
+    expect(handler).toHaveBeenCalledWith(emailEvent, { attempt: 0, maxAttempts: 3 });
     expect(markOutboxEventProcessed).toHaveBeenCalledTimes(1);
     expect(recordOutboxFailure).not.toHaveBeenCalled();
     expect(markOutboxEventPermanentlyFailed).not.toHaveBeenCalled();
