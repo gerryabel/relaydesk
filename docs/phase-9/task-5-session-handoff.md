@@ -5,7 +5,15 @@
 **Baseline:** `d1a5dd7`
 **Date:** 2026-11-01
 
+> **Note (2026-11-06):** This is a HISTORICAL handoff from the `d1a5dd7`-era session. Its
+> snapshots (git status, verification counts) are preserved as context and are superseded.
+> The authoritative current status and the T5.1 closeout record live in
+> [`docs/phase-9/task-5.md`](./task-5.md).
+
 ## 1. Current Git Status
+
+> **Historical snapshot at baseline `d1a5dd7` — this was the working-tree state at the time
+> of handoff, not the current repository state. Current status: see `task-5.md`.**
 
 ```
 M  src/__tests__/customer-attachments.api.test.ts
@@ -35,6 +43,9 @@ M  src/__tests__/customer-attachments.api.test.ts
 
 ## 3. Latest Verification
 
+> **Historical snapshot (2026-11-01) — superseded.** The final, authoritative verification is
+> the 126-file / 1736-test suite described in `task-5.md`.
+
 - **Test files:** 118 passed
 - **Tests:** 1691 passed, 0 failed
 - **Errors:** 2 unhandled `ERR_INVALID_STATE` rejections from `ReadableStream` during `customer-attachments.api.test.ts` — Node.js/undici test-environment artifact when manually consuming `NextRequest` `FormData` bodies; does not affect runtime behavior.
@@ -42,22 +53,54 @@ M  src/__tests__/customer-attachments.api.test.ts
 - **Typecheck:** passes
 - **Build:** passes
 
+### Superseded ERR_INVALID_STATE interpretation — evidence-based correction (2026-11-06)
+
+The original statement above ("does not affect runtime behavior") was an under-verified
+assessment. The corrected, evidence-based account:
+
+- The artifact's visibility is **version/runtime dependent**. At the time of handoff no
+  cross-version investigation had been done.
+- The **underlying undici implementation was not patched, and `route.ts` was not modified**.
+  The upload route's existing `readFormDataWithLimit` (explicit `reader.cancel()` in its
+  `finally` block) was left as-is; resolution happened through verification, configuration,
+  and evidence — not through production code changes.
+- Local verification on **Node 26.13.0 (undici 8.12.2)**: the real attachment API tests were
+  run five times across default/strict rejection modes with the suppressor gated OFF; all
+  passed (41/41) and no `ERR_INVALID_STATE` was reproduced.
+- GitHub Actions **Node 22** strict attachment verification passed twice (Run #51, both
+  attempts) while the suppressor still existed but was disabled, and again after removal
+  (Run #52, post-suppressor `ef3d06a` — see `task-5.md` for details and links).
+
 ## 4. Two Outstanding Final-Review Items
 
-1. **Unhandled `ERR_INVALID_STATE` rejections**  
-   Investigate root cause, including strict unhandled-rejection testing. Likely related to manual `NextRequest` body consumption in tests vs. undici stream lifecycle.
+> **Both items are now RESOLVED — full evidence trail in `task-5.md`.**
 
-2. **Untracked `storage/` directory**  
-   Inspect contents without deleting or modifying anything. Determine whether it is test artifact, local dev storage, or should be gitignored/cleaned.
+1. **Unhandled `ERR_INVALID_STATE` rejections — RESOLVED (2026-11-06).** The root-cause investigation superseded this open item:
+   - Node's strict rejection semantics were investigated (in strict mode an unhandled
+     rejection surfaces as `uncaughtException` before `unhandledRejection` is emitted).
+   - Synthetic probes established the actual event behavior under Vitest's worker listeners.
+   - The suppressor was made opt-in via `RELAYDESK_SUPPRESS_STREAM_REJECTIONS` and disabled
+     by default (commit `81c9d19`), with a `--unhandled-rejections=strict` CI verification
+     step added.
+   - Strict attachment verification passed twice on Node 22 (Run #51) with the suppressor
+     disabled, and local Node 26 runs passed in all tested modes.
+   - The suppressor was then removed entirely (commit `ef3d06a`); the post-removal Node 22
+     CI Run #52 passed.
 
-## 5. Delegated Audit Findings (preserved, not implemented)
+2. **Untracked `storage/` directory — RESOLVED (2026-11-06).** `storage/` was added to `.gitignore` (`.gitignore:53`); the working tree is clean.
+
+## 5. Delegated Audit Findings (preserved, not implemented — status as of handoff; reconciled 2026-11-06, see `task-5.md` and `task-5-audit-findings.md`)
 
 - **Location:** `docs/phase-9/task-5-audit-findings.md`
-- **Redis rate limiter:** 5 findings (1 HIGH, 2 MEDIUM, 2 LOW-MEDIUM) in `src/lib/rate-limit/redis-store.ts`, `src/lib/rate-limit/limiter.ts`, `src/lib/customer-access/rate-limit.ts`
-- **Customer email pipeline:** 7 findings (4 HIGH, 1 MEDIUM, 2 LOW) in `src/lib/queue/handlers/email-handler.ts`, `src/lib/queue/handlers/customer-email.ts`, `src/lib/customer-notifications/events.ts`, `src/lib/customer-notifications/email-content.ts`
-- **Upload concurrent resource exhaustion:** Finding F-1 (MEDIUM) added — no per-customer/IP rate limit or concurrent-upload throttle; 11 MiB max buffered body per request.
+- **Redis rate limiter:** 5 findings (1 HIGH, 2 MEDIUM, 2 LOW-MEDIUM) in `src/lib/rate-limit/redis-store.ts`, `src/lib/rate-limit/limiter.ts`, `src/lib/customer-access/rate-limit.ts` — **implemented 2026-11-01 in commit `02194b7`, shortly after this handoff was written** (see §7 for the honest sequencing note)
+- **Customer email pipeline:** 7 findings (4 HIGH, 1 MEDIUM, 2 LOW) in `src/lib/queue/handlers/email-handler.ts`, `src/lib/queue/handlers/customer-email.ts`, `src/lib/customer-notifications/events.ts`, `src/lib/customer-notifications/email-content.ts` — **still outstanding** (re-verified against HEAD `ef3d06a`)
+- **Upload concurrent resource exhaustion:** Finding F-1 (MEDIUM) added — no per-customer/IP rate limit or concurrent-upload throttle; 11 MiB max buffered body per request — **still outstanding**
 
 ## 6. Remaining Phase 9 Task 5 Objectives
+
+> **Status note (2026-11-06):** T5.1 is now CLOSED (see `task-5.md`). Redis reliability
+> (T5.2-scope) was completed in `02194b7`. The email pipeline findings E-1 through E-5, the
+> separate Resend idempotency recommendation (E-REC-1), and upload finding F-1 remain open.
 
 - T5.2–T5.5: Address Redis reliability, customer email pipeline, and upload rate-limiting findings.
 - Finalize T5.1 closeout after the two outstanding items above are resolved.
@@ -69,10 +112,16 @@ M  src/__tests__/customer-attachments.api.test.ts
 - Do not add a new rate limiter before Redis reliability findings are addressed.
 - Preserve all existing security boundaries and accepted architecture.
 
+> **Historical sequencing note (recorded 2026-11-06, neutrally):** The constraint above was
+> NOT followed literally. Redis reliability findings R-1 through R-5 were implemented in
+> commit `02194b7` (2026-11-01) BEFORE T5.1 was formally closed (closed after Step H, commit
+> `ef3d06a`, and post-removal CI Run #52). This chronology is preserved for accuracy and is
+> documented in `task-5.md` §7 — not rewritten or concealed. The email and upload findings
+> remain unstarted, consistent with the spirit of the constraint.
+
 ## 8. Exact Next Action
 
-Finish T5.1 final verification by:
-1. Investigating and resolving or documenting the 2 `ERR_INVALID_STATE` rejections.
-2. Inspecting the untracked `storage/` directory.
-3. Running full verification again.
-4. Only then mark T5.1 complete and proceed to subsequent implementation.
+> **Superseded (2026-11-06).** This handoff is historical context, not the authoritative
+> current status. See [`docs/phase-9/task-5.md`](./task-5.md) for the authoritative record:
+> T5.1 is CLOSED after Step H (suppressor removal) and Step I (documentation reconciliation);
+> E-1 through E-5 and F-1 remain the future Task 5 work.

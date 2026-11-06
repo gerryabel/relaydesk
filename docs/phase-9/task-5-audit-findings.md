@@ -5,6 +5,13 @@
 **Date:** 2026-11-01  
 **Status:** READ-ONLY AUDIT — findings preserved for later remediation
 
+> **Reconciliation note (2026-11-06, against repository HEAD `ef3d06a`):** The original audit
+> observations below are preserved verbatim as historical evidence. Remediation status has
+> been reconciled: Redis findings R-1 through R-5 were implemented in commit `02194b7` and are
+> **no longer outstanding**; customer email findings E-1 through E-5 and upload finding F-1
+> remain outstanding. Current status must be read from the inline status updates below and
+> from the final closeout document `docs/phase-9/task-5.md`.
+
 ---
 
 ## A. Redis Rate Limiter Audit
@@ -32,6 +39,7 @@
 - **Failure scenario:** An attacker triggers a burst of requests. The first request creates the key, the process crashes, and the key never expires — permanently blocking that bucket.
 - **Status:** Confirmed by code inspection. No reproducing test exists.
 - **Recommended remediation:** Use `SET key value NX EX seconds` (atomic set-if-not-exists with TTL) instead of separate `INCR` + `EXPIRE`.
+- **Status update (2026-11-06, against HEAD `ef3d06a`): Implemented in commit `02194b7`.** The store now executes the atomic Lua script `INCR_WITH_TTL_SCRIPT` (`src/lib/rate-limit/redis-store.ts`), which combines `INCR`, missing-TTL repair, and a `PTTL` return in a single script execution, eliminating the crash window between `INCR` and `EXPIRE`. Verified by the real-Redis integration suite `src/__tests__/rate-limit.redis.real.test.ts` (which executes the actual script through `ioredis.eval`) and unit coverage in `src/__tests__/customer-access.unit.test.ts`.
 
 ### Finding R-2: Retry-After returns full window duration instead of remaining TTL
 - **Severity:** MEDIUM
@@ -49,6 +57,7 @@
 - **Failure scenario:** A legitimate user hitting the rate limit is given an inaccurate Retry-After, causing unnecessary wait times or premature retries.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Query `TTL key` from Redis after increment and return the actual remaining seconds.
+- **Status update (2026-11-06, against HEAD `ef3d06a`): Implemented in commit `02194b7`.** `consumeRateLimit` (`src/lib/rate-limit/limiter.ts`) now derives `retryAfterSeconds` from the `ttlSeconds` returned by the store, keeping the tightest-exhausted-window selection, and `INCR_WITH_TTL_SCRIPT` (`src/lib/rate-limit/redis-store.ts`) returns the key's actual live `PTTL`. Verified by `src/__tests__/rate-limit.redis.real.test.ts` ("returns PTTL and rounds Retry-After up correctly").
 
 ### Finding R-3: EXPIRE return value is unchecked
 - **Severity:** MEDIUM
@@ -62,6 +71,7 @@
 - **Failure scenario:** A race condition or external cleanup deletes the key between `INCR` and `EXPIRE`. The key is recreated without a TTL.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Check the return value of `EXPIRE`; if it returns 0, re-apply the TTL or treat it as a miss.
+- **Status update (2026-11-06, against HEAD `ef3d06a`): Implemented in commit `02194b7`.** Within the same `INCR_WITH_TTL_SCRIPT` execution (`src/lib/rate-limit/redis-store.ts`), a `TTL == -1` result triggers an immediate `EXPIRE` with the configured window, so keys that never received or lost their TTL are repaired atomically on every increment rather than being silently skipped. Verified by `src/__tests__/rate-limit.redis.real.test.ts` ("repairs a legacy key that has no TTL").
 
 ### Finding R-4: All clients without detectable IP share a single bucket
 - **Severity:** LOW-MEDIUM
@@ -75,6 +85,7 @@
 - **Failure scenario:** A reverse proxy strips IP headers. An attacker sends 30 requests from a single source, exhausting the `unknown` bucket for all users behind that proxy.
 - **Status:** Confirmed by code inspection. Acceptable as a fallback, but should be documented as a known limitation.
 - **Recommended remediation:** Include the `User-Agent` hash or a session-derived dimension in the fallback bucket to increase entropy.
+- **Status update (2026-11-06, against HEAD `ef3d06a`): Mitigated in commit `02194b7`.** When no IP header is present at all, the fallback bucket key now includes truncated SHA-256 `User-Agent` entropy (`unknown:<hash-prefix>` via `readClientIp`, `src/lib/customer-access/rate-limit.ts`), so a single attacker can no longer exhaust one shared bucket for every client behind a proxy that strips IP headers. **Documented residual limitation:** a user-agent-derived identity is deliberately weaker than a stable authenticated identity — the header is shared by many users and trivially spoofable, so this fallback provides increased entropy, not per-user isolation; workspace-email and workspace-level limits remain the primary abuse protections (explicitly documented in the code's header comment). Unit coverage in `src/__tests__/customer-access.unit.test.ts`.
 
 ### Finding R-5: One-way degradation to in-memory store
 - **Severity:** LOW-MEDIUM
@@ -91,6 +102,7 @@
 - **Failure scenario:** A temporary Redis blip during deployment weakens rate limiting for the entire process lifetime.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Add a reset timer (e.g., retry Redis connectivity every 30 seconds) so degradation is temporary, not permanent.
+- **Status update (2026-11-06, against HEAD `ef3d06a`): Implemented in commit `02194b7`.** Degradation is no longer one-way: a 30-second retry timer (`DEGRADED_RETRY_INTERVAL_MS`, `src/lib/rate-limit/redis-store.ts`) probes Redis with single-flight healthchecks and restores the distributed store only after a stable window of consecutive successful healthchecks (`REQUIRED_HEALTHCHECK_SUCCESSES`), deliberately avoiding oscillation between distributed and per-instance limits on a flapping Redis instance.
 
 ---
 
@@ -104,6 +116,8 @@
 - `src/lib/customer-notifications/email-content.ts`
 
 **Tests executed:** `npm test -- --run src/__tests__/customer-email.*.test.ts src/__tests__/*email*.test.ts` → 71 passed, 0 failed. Tests do not cover the findings below.
+
+> **Status (2026-11-06, reconciled against HEAD `ef3d06a`):** **All findings E-1 through E-5 remain OUTSTANDING.** They were not addressed by the Redis reliability implementation (`02194b7`) or by the T5.1 closeout. The original evidence below is preserved unchanged; current code was re-verified on 2026-11-06 and still exhibits every pattern described.
 
 ### Finding E-1: Provider success + markEmailSent failure → duplicate delivery
 - **Severity:** HIGH
@@ -121,6 +135,7 @@
 - **Failure scenario:** `sendEmail` succeeds (customer receives email), but `markEmailSent` fails (database error). The worker releases the claim and throws. BullMQ retries. The retry claims and sends a second email.
 - **Status:** Confirmed by code inspection. No reproducing test exists.
 - **Recommended remediation:** After `markEmailSent` failure, verify whether the provider actually delivered before releasing the claim, or implement an idempotency key at the provider level.
+- **Status (re-verified 2026-11-06): REMAINS OUTSTANDING.** `src/lib/queue/handlers/email-handler.ts` still calls `markEmailSent(event.id)` immediately after a successful `sendEmail`, and the surrounding retryable-failure catch still executes `releaseEmailClaim(event.id)` and throws — no SENT record exists at that moment, so the retry/redelivery race persists as originally described.
 
 ### Finding E-2: Same provider-success/DB-failure gap in customer email path
 - **Severity:** HIGH
@@ -136,6 +151,7 @@
   Identical pattern to E-1. The customer-email handler shares the same race.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Same as E-1.
+- **Status (re-verified 2026-11-06): REMAINS OUTSTANDING.** `src/lib/queue/handlers/customer-email.ts` retains the identical success/`markEmailSent` sequence in its send flow.
 
 ### Finding E-3: Claim collision with in-progress worker returns success
 - **Severity:** HIGH
@@ -156,6 +172,7 @@
 - **Failure scenario:** Worker A claims and sends. Worker B (racing) sees the claim, finds no `SENT` record, and returns `success`. The event is marked done, but Worker A crashes before `markEmailSent`. The email is lost.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** When `claim.claimed` is false, poll/wait for the `SENT` record up to a short timeout (e.g., 10 seconds) before giving up.
+- **Status (re-verified 2026-11-06): REMAINS OUTSTANDING.** The claim-collision branch in `src/lib/queue/handlers/email-handler.ts` still performs the `getSentEmail` recheck and then returns `{ status: 'success' }` even when no SENT record exists, so the potential email-loss path persists; a short bounded poll was never implemented.
 
 ### Finding E-4: Same idempotency gap in customer email without SENT recheck
 - **Severity:** HIGH
@@ -171,6 +188,12 @@
   The customer email path does not even attempt `getSentEmail` on claim collision.
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Same as E-3.
+- **Status (re-verified 2026-11-06): REMAINS OUTSTANDING.** `src/lib/queue/handlers/customer-email.ts` still returns `{ status: 'success' }` on claim collision without any `getSentEmail` recheck whatsoever.
+
+### E-REC-1: Resend provider does not use `Idempotency-Key` (separate recommendation, not an E-1/E-2 substitute)
+- **Feature:** `src/lib/email/providers/resend.ts`
+- **Status (re-verified 2026-11-06):** No idempotency header or key is sent by the Resend provider and none is threaded through the handlers (`grep` over `src/lib/email/` finds no `Idempotency-Key`/`idempotencyKey`).
+- **Relationship:** This is a provider-side defense-in-depth recommendation. It remains SEPARATE from — and is not a substitute for remediating — the application-level E-1/E-2 send/mark-SENT handling.
 
 ### Finding E-5: Stale claim window (5 min) enables duplicate or lost emails after worker crash
 - **Severity:** MEDIUM
@@ -184,6 +207,7 @@
 - **Failure scenario:** Worker sends email, crashes before DB commit. Within 5 minutes, retry sees stale claim → success (email lost). After 5 minutes, retry sees cleared claim → sends again (duplicate email).
 - **Status:** Confirmed by code inspection.
 - **Recommended remediation:** Reduce `STALE_SEND_CLAIM_MS` or implement a reconciliation loop that checks provider-side idempotency keys.
+- **Status (re-verified 2026-11-06): REMAINS OUTSTANDING.** `STALE_SEND_CLAIM_MS = 5 * 60 * 1000` is unchanged (`src/lib/queue/handlers/email-handler.ts:11`). The within-window success-on-stale-claim pass and post-window duplicate-send behavior both persist exactly as originally described.
 
 ### Test Gaps Identified
 - **E-T1:** `src/__tests__/customer-email.handler.test.ts` line 139 mocks `sentEmail.updateMany` to always succeed; no test simulates `sendEmail` succeeding and `markEmailSent` throwing.
@@ -216,16 +240,16 @@
 - Added 2 API tests for oversized upload rejection.
 - Resolved pre-existing `InternalNote_authorId_fkey` test failure.
 
-### Verification (all green)
+### Verification (all green — historical snapshot of 2026-11-01, superseded by the final closeout verification in `docs/phase-9/task-5.md`)
 - Attachment tests: 7 files, 233 tests passed
 - Full suite: 118 files, 1687 tests passed
 - Lint: 0 errors, 0 warnings
 - Typecheck: passes
 - Build: passes
 
-### Outstanding (preserved for T5.2–T5.5)
-- Redis rate limiter findings R-1 through R-5
-- Customer email findings E-1 through E-5
+### Outstanding (updated 2026-11-06 — R-1 through R-5 removed from this list; they are implemented. See `docs/phase-9/task-5.md` for the full T5.1 closure record and the historical implementation sequence)
+- Customer email findings E-1 through E-5 — all remain OUTSTANDING (re-verified against HEAD `ef3d06a` on 2026-11-06)
+- E-REC-1: separate recommendation — Resend provider does not use `Idempotency-Key` (not a substitute for E-1/E-2 fixes)
 - **F-1: Upload API concurrent resource exhaustion**
   - **Severity:** MEDIUM
   - **Scope:** `src/app/api/portal/[workspaceSlug]/tickets/[ticketId]/messages/[messageId]/attachments/route.ts` and the per-IP rate limiter in `src/lib/customer-access/rate-limit.ts`
@@ -233,3 +257,4 @@
   - **Concurrent upload impact:** The upload endpoint has no per-customer or per-IP rate limit and no concurrent-upload throttle. A single customer or IP can open N simultaneous 11 MiB requests, consuming N × 11 MiB of server-side memory and disk I/O. With no ingress-level concurrency control, this is a viable low-bandwidth denial-of-service vector.
   - **Deployment ingress:** Unknown from current evidence. No ingress rate limit or request-size cap has been identified in the codebase or deployment docs reviewed so far.
   - **Recommended mitigation:** Address the Redis reliability findings (R-1 through R-5) first so the existing rate-limiter store is trustworthy, then add an upload-specific rate-limit key that caps requests per customer/IP per minute and a semaphore-style concurrency guard around the attachment storage path.
+  - **Status (re-verified 2026-11-06 against HEAD `ef3d06a`): REMAINS OUTSTANDING.** The portal upload route still performs payload-size validation only and imports no rate-limiting or concurrency-guard code; the Redis-reliability prerequisite above is now satisfied (R-1..R-5 implemented in `02194b7`), so F-1 is implementable without further store work.
